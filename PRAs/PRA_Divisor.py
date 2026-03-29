@@ -211,7 +211,12 @@ def stage_2_detect_junction_cells(
 	out_dir: Path,
 	base_profile: dict,
 ) -> List[dict]:
-	"""Stage 2: detect upstream tributary-end junctions on 8-neighbour D8 streams."""
+	"""Stage 2: detect junctions on 8-neighbour D8 streams.
+
+	Junctions are created for:
+	- confluences (classic tributary merge behavior), and
+	- Strahler order transitions along a stream (e.g. 1->2) even without bifurcation.
+	"""
 	d8, _ = load_raster_array(d8_pointer_path)
 	streams, _ = load_raster_array(streams_path)
 	strahler, _ = load_raster_array(strahler_path)
@@ -252,6 +257,18 @@ def stage_2_detect_junction_cells(
 				break
 		if not has_upstream_candidate:
 			junction_cell_set.add((r, c))
+
+	# Additional rule requested by user:
+	# create a junction where a stream cell flows into a downstream cell with
+	# strictly higher Strahler order, even if there is no geometric bifurcation.
+	for r, c in zip(rr, cc):
+		nr, nc = down_r[r, c], down_c[r, c]
+		if nr < 0:
+			continue
+		up_order = int(strahler[r, c])
+		down_order = int(strahler[nr, nc])
+		if up_order > 0 and down_order > up_order:
+			junction_cell_set.add((int(nr), int(nc)))
 
 	# Edge fallback requested by user:
 	# add junctions on border cells that are stream heads or stream outlets.

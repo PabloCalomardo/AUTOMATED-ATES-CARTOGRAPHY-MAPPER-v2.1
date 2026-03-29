@@ -15,6 +15,7 @@ import os
 import sys
 import subprocess
 import argparse
+from collections import deque
 
 import numpy as np
 import rasterio
@@ -116,6 +117,52 @@ def configure_runtime_settings(
 
 # Default EPSG for GRASS location creation (string as GRASS expects)
 _GRASS_EPSG = "25833"
+
+
+def _recompute_grass_paths() -> None:
+    global LOCATION_PATH, PERMANENT_PATH, MAPSET_PATH
+    LOCATION_PATH = os.path.join(GRASS_DB, LOCATION)
+    PERMANENT_PATH = os.path.join(LOCATION_PATH, "PERMANENT")
+    MAPSET_PATH = os.path.join(LOCATION_PATH, MAPSET)
+
+
+def infer_dem_epsg(dem_path: str) -> str | None:
+    try:
+        with rasterio.open(dem_path) as src:
+            if src.crs is None:
+                return None
+            epsg = src.crs.to_epsg()
+            if epsg is None:
+                return None
+            return str(epsg)
+    except Exception:
+        return None
+
+
+def read_location_epsg(permanent_path: str) -> str | None:
+    if not os.path.exists(permanent_path):
+        return None
+    proc = subprocess.run(
+        [GRASS_EXE, permanent_path, "--exec", "g.proj", "-g"],
+        text=True,
+        capture_output=True,
+        stdin=subprocess.DEVNULL,
+    )
+    if proc.returncode != 0:
+        return None
+
+    epsg = None
+    for raw in proc.stdout.splitlines():
+        line = raw.strip()
+        if line.startswith("epsg="):
+            epsg = line.split("=", 1)[1].strip()
+            break
+        if line.startswith("srid="):
+            srid = line.split("=", 1)[1].strip()
+            if srid.upper().startswith("EPSG:"):
+                epsg = srid.split(":", 1)[1].strip()
+                break
+    return epsg
 
 
 def split_pras_by_basin(basins_tif: str, pra_assigned_tif: str, out_dir: str) -> list[str]:
@@ -248,6 +295,84 @@ def split_pras_by_basin(basins_tif: str, pra_assigned_tif: str, out_dir: str) ->
     return created
 
 
+def ensure_full_dem_basin_coverage(basins_tif: str, dem_tif: str) -> int:
+    """Fill uncovered DEM areas with new basin IDs using connected components.
+
+    Returns number of new basins created.
+    """
+    with rasterio.open(dem_tif) as src_dem:
+        dem_valid = ~src_dem.read(1, masked=True).mask
+
+    with rasterio.open(basins_tif) as src_b:
+        basins_ma = src_b.read(1, masked=True)
+        profile = src_b.profile.copy()
+
+    basins = basins_ma.filled(0).astype(np.int32, copy=False)
+    has_basin = (~basins_ma.mask) & (basins > 0)
+    uncovered = dem_valid & (~has_basin)
+
+    if not np.any(uncovered):
+        # Ensure pixels outside DEM footprint are explicit nodata.
+        out_nodata = profile.get("nodata")
+        if out_nodata is None:
+            out_nodata = 0
+            profile.update(nodata=out_nodata)
+        basins_out = basins.copy()
+        basins_out[~dem_valid] = int(out_nodata)
+        with rasterio.open(basins_tif, "w", **profile) as dst:
+            dst.write(basins_out, 1)
+        return 0
+
+    max_id = int(basins[has_basin].max()) if np.any(has_basin) else 0
+    rows, cols = basins.shape
+    visited = np.zeros(basins.shape, dtype=bool)
+    new_count = 0
+
+    # 8-neighbour connectivity, consistent with D8-style neighborhoods.
+    neighbors = [
+        (-1, -1), (-1, 0), (-1, 1),
+        (0, -1),           (0, 1),
+        (1, -1),  (1, 0),  (1, 1),
+    ]
+
+    seed_rows, seed_cols = np.where(uncovered)
+    for sr, sc in zip(seed_rows, seed_cols):
+        if visited[sr, sc]:
+            continue
+        if not uncovered[sr, sc]:
+            visited[sr, sc] = True
+            continue
+
+        max_id += 1
+        new_count += 1
+        q: deque[tuple[int, int]] = deque([(int(sr), int(sc))])
+        visited[sr, sc] = True
+
+        while q:
+            r, c = q.popleft()
+            basins[r, c] = max_id
+
+            for dr, dc in neighbors:
+                nr, nc = r + dr, c + dc
+                if nr < 0 or nr >= rows or nc < 0 or nc >= cols:
+                    continue
+                if visited[nr, nc] or not uncovered[nr, nc]:
+                    continue
+                visited[nr, nc] = True
+                q.append((nr, nc))
+
+    out_nodata = profile.get("nodata")
+    if out_nodata is None:
+        out_nodata = 0
+        profile.update(nodata=out_nodata)
+    basins[~dem_valid] = int(out_nodata)
+
+    with rasterio.open(basins_tif, "w", **profile) as dst:
+        dst.write(basins, 1)
+
+    return new_count
+
+
 def run(args):
     """Executa una comanda GRASS i atura si hi ha error.
     - stdin=DEVNULL evita que el 'pause on error' del bat bloquegi el procés.
@@ -285,6 +410,8 @@ def run_watershed():
 
 
 def main():
+    global _GRASS_EPSG, LOCATION
+
     parser = argparse.ArgumentParser(description="Create drainage basins and split PRA-by-basin rasters.")
     parser.add_argument("--dem", default=None, help="DEM path to use (default: inputs/DEM.tif)")
     parser.add_argument(
@@ -302,7 +429,11 @@ def main():
     parser.add_argument("--watershed-threshold", type=int, default=THRESHOLD)
     parser.add_argument("--watershed-memory", type=int, default=MEMORY)
     parser.add_argument("--grass-exe", default=GRASS_EXE)
-    parser.add_argument("--grass-epsg", default=_GRASS_EPSG)
+    parser.add_argument(
+        "--grass-epsg",
+        default=None,
+        help="EPSG for GRASS location. If omitted, inferred from DEM when possible.",
+    )
     parser.add_argument("--grass-db", default=GRASS_DB)
     parser.add_argument("--grass-location", default=LOCATION)
     parser.add_argument("--grass-mapset", default=MAPSET)
@@ -324,8 +455,27 @@ def main():
         print(f"ERROR: No s'ha trobat el DEM a {wanted}")
         sys.exit(1)
 
+    if args.grass_epsg is None:
+        inferred_epsg = infer_dem_epsg(DEM_INPUT)
+        if inferred_epsg is not None:
+            _GRASS_EPSG = inferred_epsg
+            print(f"EPSG inferit del DEM: {_GRASS_EPSG}")
+        else:
+            print(f"AVÍS: no s'ha pogut inferir EPSG del DEM; s'usarà l'EPSG per defecte: {_GRASS_EPSG}")
+
     os.makedirs(GRASS_DB, exist_ok=True)
     os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    existing_epsg = read_location_epsg(PERMANENT_PATH)
+    if existing_epsg is not None and existing_epsg != _GRASS_EPSG:
+        old_location = LOCATION
+        LOCATION = f"{old_location}_epsg{_GRASS_EPSG}"
+        _recompute_grass_paths()
+        print(
+            "AVÍS: la location GRASS existent té un CRS diferent "
+            f"(EPSG:{existing_epsg} != EPSG:{_GRASS_EPSG}). "
+            f"S'usarà una location nova: {LOCATION}"
+        )
 
     # 1. Crear la localització GRASS amb EPSG (ETRS89 UTM Zone 33N per defecte)
     #    El DEM té una SRS codificada com a Engineering CRS que GRASS rebutja;
@@ -391,6 +541,13 @@ def main():
          "format=GTiff",
          "type=Int32",
          "createopt=COMPRESS=LZW"])
+
+    # 8.1 Ensure every valid DEM cell belongs to a basin.
+    # If watershed leaves uncovered islands (common with non-rectangular DEM masks),
+    # assign each connected uncovered region to a new basin ID.
+    new_basins = ensure_full_dem_basin_coverage(BASIN_TIF, DEM_INPUT)
+    if new_basins > 0:
+        print(f"Afegides {new_basins} conques noves per components connexes (zones DEM sense basin).")
 
     print(f"\nFet! {n_basins} conques exportades a: {BASIN_TIF}  (threshold={THRESHOLD})")
 

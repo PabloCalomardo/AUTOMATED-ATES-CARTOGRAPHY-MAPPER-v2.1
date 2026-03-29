@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
-"""Post-process Flow-Py bitmasks to one GeoJSON with full overlap information.
+"""Post-process Flow-Py bitmasks to one GeoJSON with avalanche contours.
 
 Reads all source_ids_bitmask.tif files under outputs/Flow-Py/*/res_* and writes
 one single GeoJSON containing:
 
 1) avalanches: one (multi)polygon feature per avalanche id and run
-2) overlap_zones: polygons of exact overlap combinations (bitmask zones)
-
-This preserves all overlap information in one artifact without extra dependencies.
 """
 
 from __future__ import annotations
@@ -20,6 +17,7 @@ from typing import Dict, List
 import numpy as np
 import rasterio
 from rasterio.features import shapes
+from rasterio.warp import transform_geom
 
 
 def _find_flowpy_result_dirs(flowpy_root: Path) -> List[Path]:
@@ -34,16 +32,6 @@ def _find_flowpy_result_dirs(flowpy_root: Path) -> List[Path]:
 	return result_dirs
 
 
-def _decode_avalanche_ids(mask_value: int, max_bits: int = 64) -> List[int]:
-	ids: List[int] = []
-	value_u64 = np.uint64(mask_value)
-	for bit_idx in range(max_bits):
-		bit = np.uint64(1) << np.uint64(bit_idx)
-		if (value_u64 & bit) != 0:
-			ids.append(bit_idx + 1)
-	return ids
-
-
 def _run_context(res_dir: Path) -> Dict[str, str]:
 	basin_dir = res_dir.parent.name
 	run_id = res_dir.name
@@ -53,19 +41,31 @@ def _run_context(res_dir: Path) -> Dict[str, str]:
 	}
 
 
-def _write_geojson(flowpy_root: Path, output_geojson: Path) -> None:
+def _dem_crs_wkt(dem_path: Path) -> str | None:
+	if not dem_path.exists():
+		raise FileNotFoundError(f"DEM not found for CRS extraction: {dem_path}")
+	with rasterio.open(dem_path) as src:
+		if src.crs is None:
+			return None
+		return src.crs.to_wkt()
+
+
+def _write_geojson(flowpy_root: Path, output_geojson: Path, target_crs_wkt: str | None = None) -> None:
 	output_geojson.parent.mkdir(parents=True, exist_ok=True)
 
 	result_dirs = _find_flowpy_result_dirs(flowpy_root)
 	if not result_dirs:
 		raise RuntimeError(f"No Flow-Py result folders found under: {flowpy_root}")
 
-	# Use first available CRS as reference metadata for the GeoJSON.
+	# Use first available CRS as geometry source CRS.
 	first_bitmask = result_dirs[0] / "source_ids_bitmask.tif"
 	if not first_bitmask.exists():
 		raise RuntimeError(f"Missing source_ids_bitmask.tif in: {result_dirs[0]}")
 	with rasterio.open(first_bitmask) as src_ref:
-		crs_wkt = None if src_ref.crs is None else src_ref.crs.to_wkt()
+		source_crs_wkt = None if src_ref.crs is None else src_ref.crs.to_wkt()
+
+	# If no explicit target CRS is provided, preserve source geometry CRS.
+	crs_wkt = target_crs_wkt if target_crs_wkt is not None else source_crs_wkt
 
 	features: List[Dict] = []
 
@@ -78,10 +78,11 @@ def _write_geojson(flowpy_root: Path, output_geojson: Path) -> None:
 		with rasterio.open(bitmask_path) as src:
 			bitmask = src.read(1).astype(np.uint64, copy=False)
 			transform = src.transform
+			bitmask_crs_wkt = None if src.crs is None else src.crs.to_wkt()
 
 		ctx = _run_context(res_dir)
 
-		# Layer-like feature group 1: avalanche polygons.
+		# One feature group: avalanche polygons.
 		n_avalanches = 0
 		for avalanche_id in range(1, 65):
 			bit = np.uint64(1) << np.uint64(avalanche_id - 1)
@@ -93,6 +94,20 @@ def _write_geojson(flowpy_root: Path, output_geojson: Path) -> None:
 			for geom, value in shapes(mask.astype(np.uint8), mask=mask, transform=transform):
 				if int(value) != 1:
 					continue
+
+				if (
+					crs_wkt is not None
+					and bitmask_crs_wkt is not None
+					and bitmask_crs_wkt != crs_wkt
+				):
+					geom = transform_geom(
+						src_crs=bitmask_crs_wkt,
+						dst_crs=crs_wkt,
+						geom=geom,
+						antimeridian_cutting=False,
+						precision=-1,
+					)
+
 				features.append(
 					{
 						"type": "Feature",
@@ -106,34 +121,6 @@ def _write_geojson(flowpy_root: Path, output_geojson: Path) -> None:
 					}
 				)
 
-		# Layer-like feature group 2: exact overlap zones by bitmask value (>0).
-		unique_values = np.unique(bitmask)
-		unique_values = [int(v) for v in unique_values.tolist() if int(v) > 0]
-		for value in unique_values:
-			zone_mask = bitmask == np.uint64(value)
-			if not np.any(zone_mask):
-				continue
-			av_ids = _decode_avalanche_ids(value)
-			av_ids_str = ",".join(str(v) for v in av_ids)
-
-			for geom, geom_val in shapes(zone_mask.astype(np.uint8), mask=zone_mask, transform=transform):
-				if int(geom_val) != 1:
-					continue
-				features.append(
-					{
-						"type": "Feature",
-						"geometry": geom,
-						"properties": {
-							"feature_type": "overlap_zone",
-							"basin_id": ctx["basin_id"],
-							"run_id": ctx["run_id"],
-							"bitmask": str(value),
-							"n_aval": len(av_ids),
-							"aval_ids": av_ids_str,
-						},
-					}
-				)
-
 		print(f"[ok] {res_dir}: {n_avalanches} allaus processades")
 
 	collection = {
@@ -142,12 +129,19 @@ def _write_geojson(flowpy_root: Path, output_geojson: Path) -> None:
 		"crs_wkt": crs_wkt,
 		"features": features,
 	}
+	if crs_wkt is not None:
+		collection["crs"] = {
+			"type": "name",
+			"properties": {
+				"name": crs_wkt,
+			},
+		}
 	output_geojson.write_text(json.dumps(collection, ensure_ascii=False), encoding="utf-8")
 
 
 def parse_args() -> argparse.Namespace:
 	parser = argparse.ArgumentParser(
-		description="Export Flow-Py avalanche polygons and overlap zones to one GeoJSON"
+		description="Export Flow-Py avalanche polygons to one GeoJSON"
 	)
 	parser.add_argument(
 		"--flowpy-root",
@@ -158,6 +152,11 @@ def parse_args() -> argparse.Namespace:
 		"--output-geojson",
 		default="outputs/Avalanche_Shapes/avalanche_shapes.geojson",
 		help="Single GeoJSON output path (default: outputs/Avalanche_Shapes/avalanche_shapes.geojson)",
+	)
+	parser.add_argument(
+		"--dem-crs-source",
+		default=None,
+		help="Optional DEM path to force output CRS from DEM original metadata.",
 	)
 	return parser.parse_args()
 
@@ -173,8 +172,19 @@ def main() -> None:
 	if not output_geojson.is_absolute():
 		output_geojson = (app_root / output_geojson).resolve()
 
+	target_crs_wkt = None
+	if args.dem_crs_source is not None:
+		dem_path = Path(args.dem_crs_source).expanduser()
+		if not dem_path.is_absolute():
+			dem_path = (app_root / dem_path).resolve()
+		target_crs_wkt = _dem_crs_wkt(dem_path)
+
 	print(f"Found {len(_find_flowpy_result_dirs(flowpy_root))} Flow-Py result folders")
-	_write_geojson(flowpy_root=flowpy_root, output_geojson=output_geojson)
+	_write_geojson(
+		flowpy_root=flowpy_root,
+		output_geojson=output_geojson,
+		target_crs_wkt=target_crs_wkt,
+	)
 	print(f"Done. Output: {output_geojson}")
 
 

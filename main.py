@@ -8,6 +8,7 @@ Execution order (current MVP):
 4) Subdivide PRA (PRA divisor)
 5) Watershed subdivision + PRA split (GRASS)
 6) Run Flow-Py once per `pra_basin_*.tif`
+7) Post-process Flow-Py outputs to one GeoJSON
 
 Each step writes its own folder under `outputs/` so results can be reviewed
 individually.
@@ -24,7 +25,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from PREPROCESSING.preprocess import fill_dem_simple
+from PREPROCESSING.preprocess import align_forest_to_dem, fill_dem_simple
 
 
 def _abs_path_from_app(path_str: str) -> Path:
@@ -37,6 +38,22 @@ def _abs_path_from_app(path_str: str) -> Path:
 
 def _ensure_dir(path: Path) -> None:
 	path.mkdir(parents=True, exist_ok=True)
+
+
+def _raster_epsg(path: Path) -> Optional[str]:
+	"""Return EPSG code from raster CRS when available."""
+	try:
+		import rasterio
+	except Exception:
+		return None
+
+	with rasterio.open(path) as src:
+		if src.crs is None:
+			return None
+		epsg = src.crs.to_epsg()
+		if epsg is None:
+			return None
+		return str(epsg)
 
 
 def step_01_inputs(dem_path: Path, forest_path: Optional[Path], out_dir: Path) -> Dict[str, Any]:
@@ -73,11 +90,27 @@ def step_01_inputs(dem_path: Path, forest_path: Optional[Path], out_dir: Path) -
 	return manifest
 
 
-def step_02_preprocess_dem(dem_path: Path, out_dir: Path) -> Path:
+def step_02_preprocess_dem(
+	dem_path: Path,
+	out_dir: Path,
+	forest_path: Optional[Path] = None,
+	forest_crs: Optional[str] = None,
+) -> tuple[Path, Optional[Path]]:
 	_ensure_dir(out_dir)
 	out_dem = out_dir / "dem_filled_simple.tif"
 	fill_dem_simple(in_dem=dem_path, out_dem=out_dem)
-	return out_dem
+
+	out_forest: Optional[Path] = None
+	if forest_path is not None:
+		out_forest = out_dir / "forest_aligned.tif"
+		align_forest_to_dem(
+			in_forest=forest_path,
+			ref_dem=out_dem,
+			out_forest=out_forest,
+			forest_crs=forest_crs,
+		)
+
+	return out_dem, out_forest
 
 
 def step_03_pra_autoates(
@@ -221,6 +254,33 @@ def step_05_watershed_subdivision(
 		str(grass_mapset),
 	]
 	subprocess.run(cmd, check=True)
+
+
+def step_07_postprocess_flowpy(
+	flowpy_out_dir: Path,
+	out_dir: Path,
+	dem_original_path: Path,
+) -> Path:
+	"""Run Flow-Py postprocess and write a single GeoJSON output."""
+	_ensure_dir(out_dir)
+
+	script = (Path(__file__).resolve().parent / "PostProcess_FlowPY" / "post_FlowPy.py").resolve()
+	if not script.exists():
+		raise FileNotFoundError(f"PostProcess script not found: {script}")
+
+	out_geojson = out_dir / "avalanche_shapes.geojson"
+	cmd = [
+		sys.executable,
+		str(script),
+		"--flowpy-root",
+		str(flowpy_out_dir),
+		"--output-geojson",
+		str(out_geojson),
+		"--dem-crs-source",
+		str(dem_original_path),
+	]
+	subprocess.run(cmd, check=True)
+	return out_geojson
 
 
 def _load_flowpy_entrypoint(flowpy_dir: Path) -> Callable[[List[str], Dict[str, str]], None]:
@@ -408,12 +468,17 @@ def step_06_flowpy_per_basin(
 
 
 def parse_args() -> argparse.Namespace:
-	parser = argparse.ArgumentParser(description="Run APP_ATES_PABLO pipeline (steps 1-6).")
-	parser.add_argument("--dem", default="inputs/DEM.tif", help="Path to input DEM (GeoTIFF)")
-	parser.add_argument("--forest", default="inputs/FOREST.tif", help="Path to forest density raster (GeoTIFF)")
+	parser = argparse.ArgumentParser(description="Run APP_ATES_PABLO pipeline (steps 1-7).")
+	parser.add_argument("--dem", default="inputs/DEM_BOW_SUMMIT.tif", help="Path to input DEM (GeoTIFF)")
+	parser.add_argument("--forest", default="inputs/FOREST_BOW_SUMMIT.tif", help="Path to forest density raster (GeoTIFF)")
+	parser.add_argument(
+		"--forest-crs",
+		default=None,
+		help="Optional CRS for forest raster when missing in metadata (example: EPSG:25833)",
+	)
 	parser.add_argument(
 		"--forest-type",
-		default="stems",
+		default="pcc",
 		choices=["stems", "bav", "pcc", "sen2cc", "no_forest"],
 		help="Forest input type expected by PRA module",
 	)
@@ -439,15 +504,19 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--quiet", action="store_true", help="Reduce verbose logs for some steps")
 
 	# --- PRA_Divisor parameterization (defaults match PRA_Divisor.py)
-	parser.add_argument("--divisor-stream-threshold", type=float, default=210)
-	parser.add_argument("--divisor-channel-init-exponent", type=float, default=1)
-	parser.add_argument("--divisor-channel-min-slope", type=float, default=1e-4)
+	parser.add_argument("--divisor-stream-threshold", type=float, default=850) #default dem_gran 850
+	parser.add_argument("--divisor-channel-init-exponent", type=float, default=0) #default dem_gran v0.7
+	parser.add_argument("--divisor-channel-min-slope", type=float, default=0.005) #default dem_gran v1 005
 
 	# --- Watershed_Subdivisions parameterization (defaults match PRA_Watershed_Subdivision.py)
 	parser.add_argument("--watershed-threshold", type=int, default=12000)
 	parser.add_argument("--watershed-memory", type=int, default=500)
 	parser.add_argument("--grass-exe", default=r"C:\Program Files\QGIS 3.40.13\bin\grass84.bat")
-	parser.add_argument("--grass-epsg", default="25833")
+	parser.add_argument(
+		"--grass-epsg",
+		default=None,
+		help="EPSG for GRASS location. If omitted, inferred from preprocessed DEM CRS.",
+	)
 	parser.add_argument("--grass-db", default="grassdata")
 	parser.add_argument("--grass-location", default="watershed_project")
 	parser.add_argument("--grass-mapset", default="NOUDIRECTORIDEMAPES")
@@ -461,10 +530,10 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--flowpy-alpha", type=int, default=25)
 	parser.add_argument("--flowpy-exponent", type=int, default=8)
 	parser.add_argument("--flowpy-flux", type=float, default=0.003)
-	parser.add_argument("--flowpy-max-z", type=float, default=8848)
+	parser.add_argument("--flowpy-max-z", type=float, default=270) #default dem_gran 270
 	parser.add_argument(
 		"--flowpy-forest",
-		default="inputs/FOREST.tif",
+		default="inputs/FOREST_BOW_SUMMIT.tif",
 		help="Forest raster passed to Flow-Py as forest=...",
 	)
 	parser.add_argument(
@@ -491,14 +560,24 @@ def main() -> None:
 	out_04 = outputs_dir / "PRA_Divisor"
 	out_05 = outputs_dir / "Watershed_Subdivisions"
 	out_06 = outputs_dir / "Flow-Py"
+	out_07 = outputs_dir / "Avalanche_Shapes"
 
 	if args.only_step6:
 		dem_filled = out_02 / "dem_filled_simple.tif"
+		forest_aligned = out_02 / "forest_aligned.tif"
 		if not dem_filled.exists():
 			raise RuntimeError(
 				"Missing preprocessed DEM for step 6 only mode: "
 				f"{dem_filled}. Run full pipeline first (steps 1-5)."
 			)
+
+		flowpy_forest_for_step6 = flowpy_forest
+		if (
+			forest_path is not None
+			and flowpy_forest.resolve() == forest_path.resolve()
+			and forest_aligned.exists()
+		):
+			flowpy_forest_for_step6 = forest_aligned
 
 		print("[only-step6] Running Flow-Py per basin using existing outputs...")
 		step_06_flowpy_per_basin(
@@ -510,7 +589,7 @@ def main() -> None:
 			exponent=args.flowpy_exponent,
 			flux=args.flowpy_flux,
 			max_z=args.flowpy_max_z,
-			forest_path=flowpy_forest,
+			forest_path=flowpy_forest_for_step6,
 			infra_path=flowpy_infra,
 		)
 		print("Done (step 6 only).")
@@ -520,14 +599,24 @@ def main() -> None:
 	print("[1/6] Validating inputs...")
 	step_01_inputs(dem_path=dem_path, forest_path=forest_path, out_dir=out_01)
 
-	print("[2/6] Preprocessing DEM (simple fill)...")
-	dem_filled = step_02_preprocess_dem(dem_path=dem_path, out_dir=out_02)
+	print("[2/6] Preprocessing DEM and aligning forest raster...")
+	dem_filled, forest_aligned = step_02_preprocess_dem(
+		dem_path=dem_path,
+		out_dir=out_02,
+		forest_path=forest_path,
+		forest_crs=args.forest_crs,
+	)
+
+	pra_forest_path = forest_aligned if forest_aligned is not None else forest_path
+	flowpy_forest_for_run = flowpy_forest
+	if forest_path is not None and flowpy_forest.resolve() == forest_path.resolve() and forest_aligned is not None:
+		flowpy_forest_for_run = forest_aligned
 
 	print("[3/6] Computing PRA...")
 	pra_outputs = step_03_pra_autoates(
 		forest_type=args.forest_type,
 		dem_path=dem_filled,
-		forest_path=forest_path,
+		forest_path=pra_forest_path,
 		out_dir=out_03,
 		radius=args.radius,
 		prob=args.prob,
@@ -556,6 +645,16 @@ def main() -> None:
 	if not pra_assigned.exists():
 		raise RuntimeError(f"Expected PRA divisor output not found: {pra_assigned}")
 
+	grass_epsg_value = args.grass_epsg
+	if grass_epsg_value is None:
+		grass_epsg_value = _raster_epsg(dem_filled)
+		if grass_epsg_value is None:
+			raise RuntimeError(
+				"Could not infer DEM EPSG for watershed subdivision. "
+				"Use --grass-epsg <EPSG> (for example --grass-epsg 25833)."
+			)
+		print(f"[5/6] Using DEM EPSG for GRASS location: {grass_epsg_value}")
+
 	print("[5/6] Watershed subdivision + PRA split...")
 	step_05_watershed_subdivision(
 		dem_path=dem_filled,
@@ -564,7 +663,7 @@ def main() -> None:
 		watershed_threshold=args.watershed_threshold,
 		watershed_memory=args.watershed_memory,
 		grass_exe=args.grass_exe,
-		grass_epsg=args.grass_epsg,
+		grass_epsg=grass_epsg_value,
 		grass_db=args.grass_db,
 		grass_location=args.grass_location,
 		grass_mapset=args.grass_mapset,
@@ -579,9 +678,17 @@ def main() -> None:
 		exponent=args.flowpy_exponent,
 		flux=args.flowpy_flux,
 		max_z=args.flowpy_max_z,
-		forest_path=flowpy_forest,
+		forest_path=flowpy_forest_for_run,
 		infra_path=flowpy_infra,
 	)
+
+	print("[7/7] Post-processing Flow-Py outputs...")
+	postprocess_geojson = step_07_postprocess_flowpy(
+		flowpy_out_dir=out_06,
+		out_dir=out_07,
+		dem_original_path=dem_path,
+	)
+	print(f"        postprocess: {postprocess_geojson.name}")
 
 	print("Done.")
 	print(f"Outputs base dir: {outputs_dir}")
