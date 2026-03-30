@@ -200,3 +200,47 @@ def fill_dem_simple(in_dem: str | Path, out_dem: str | Path) -> Path:
 
 	return out_path
 
+
+def normalize_forest_for_flowpy(
+	in_forest: str | Path,
+	out_forest: str | Path,
+) -> Path:
+	"""Normalize forest raster for Flow-Py to a 0..1 range.
+
+	Expected input is PCC in percent (0..100). Values are clipped to [0, 100]
+	and scaled by 1/100. Nodata and DEM-outside footprint remain nodata.
+	"""
+
+	in_path = Path(in_forest).expanduser().resolve()
+	out_path = Path(out_forest).expanduser().resolve()
+	out_path.parent.mkdir(parents=True, exist_ok=True)
+
+	import numpy as np
+	import rasterio
+
+	with rasterio.open(in_path) as src:
+		arr = src.read(1)
+		profile = src.profile.copy()
+		nodata = src.nodata
+
+	arr_f = arr.astype("float32", copy=True)
+	if nodata is None:
+		valid = np.isfinite(arr_f)
+	else:
+		if np.isnan(nodata):
+			valid = np.isfinite(arr_f)
+		else:
+			valid = arr != nodata
+
+	norm = np.zeros_like(arr_f, dtype="float32")
+	norm[valid] = np.clip(arr_f[valid], 0.0, 100.0) / 100.0
+
+	out_nodata = -9999.0
+	norm[~valid] = out_nodata
+
+	profile.update(count=1, dtype="float32", nodata=out_nodata, compress="deflate")
+	with rasterio.open(out_path, "w", **profile) as dst:
+		dst.write(norm, 1)
+
+	return out_path
+

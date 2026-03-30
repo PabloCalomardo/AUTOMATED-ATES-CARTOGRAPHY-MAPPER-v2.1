@@ -132,6 +132,7 @@ python main.py \
 ## Sortides principals
 
 - `outputs/Preprocess/dem_filled_simple.tif`
+- `outputs/Preprocess/FOREST_NORMALIZED.tif`
 - `outputs/PRA_AutoATES/PRA_binary.tif`
 - `outputs/PRA_Divisor/pra_assigned_junction.tif`
 - `outputs/Watershed_Subdivisions/basins.tif`
@@ -149,9 +150,10 @@ En cada `res_*` del Flow-Py tindràs, a més de les capes estàndard, una capa `
 - `--flowpy-exponent` (default: `8`)
 - `--flowpy-flux` (default: `0.003`)
 - `--flowpy-max-z` (default: `8848`)
-- `--flowpy-forest` (default: `inputs/FOREST.tif`)
 - `--flowpy-infra` (opcional)
 - `--only-step6` (executa exclusivament el pas 6)
+
+Nota: el pas de preprocess genera automàticament `outputs/Preprocess/FOREST_NORMALIZED.tif` (escala 0..1) i és la capa forest que usa Flow-Py.
 
 ## Execució dels scripts per separat (opcional)
 

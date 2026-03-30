@@ -25,7 +25,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from PREPROCESSING.preprocess import align_forest_to_dem, fill_dem_simple
+from PREPROCESSING.preprocess import align_forest_to_dem, fill_dem_simple, normalize_forest_for_flowpy
 
 
 def _abs_path_from_app(path_str: str) -> Path:
@@ -95,12 +95,13 @@ def step_02_preprocess_dem(
 	out_dir: Path,
 	forest_path: Optional[Path] = None,
 	forest_crs: Optional[str] = None,
-) -> tuple[Path, Optional[Path]]:
+) -> tuple[Path, Optional[Path], Optional[Path]]:
 	_ensure_dir(out_dir)
 	out_dem = out_dir / "dem_filled_simple.tif"
 	fill_dem_simple(in_dem=dem_path, out_dem=out_dem)
 
 	out_forest: Optional[Path] = None
+	out_forest_normalized: Optional[Path] = None
 	if forest_path is not None:
 		out_forest = out_dir / "forest_aligned.tif"
 		align_forest_to_dem(
@@ -109,8 +110,13 @@ def step_02_preprocess_dem(
 			out_forest=out_forest,
 			forest_crs=forest_crs,
 		)
+		out_forest_normalized = out_dir / "FOREST_NORMALIZED.tif"
+		normalize_forest_for_flowpy(
+			in_forest=out_forest,
+			out_forest=out_forest_normalized,
+		)
 
-	return out_dem, out_forest
+	return out_dem, out_forest, out_forest_normalized
 
 
 def step_03_pra_autoates(
@@ -532,11 +538,6 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--flowpy-flux", type=float, default=0.003)
 	parser.add_argument("--flowpy-max-z", type=float, default=270) #default dem_gran 270
 	parser.add_argument(
-		"--flowpy-forest",
-		default="inputs/FOREST_BOW_SUMMIT.tif",
-		help="Forest raster passed to Flow-Py as forest=...",
-	)
-	parser.add_argument(
 		"--flowpy-infra",
 		default=None,
 		help="Optional infrastructure raster passed to Flow-Py as infra=...",
@@ -550,7 +551,6 @@ def main() -> None:
 	forest_path = None if args.forest is None else _abs_path_from_app(args.forest)
 	outputs_dir = _abs_path_from_app(args.outputs_dir)
 	flowpy_dir = _abs_path_from_app(args.flowpy_dir)
-	flowpy_forest = _abs_path_from_app(args.flowpy_forest)
 	flowpy_infra = None if args.flowpy_infra is None else _abs_path_from_app(args.flowpy_infra)
 
 	# Step folders (align with existing project outputs naming)
@@ -564,20 +564,19 @@ def main() -> None:
 
 	if args.only_step6:
 		dem_filled = out_02 / "dem_filled_simple.tif"
-		forest_aligned = out_02 / "forest_aligned.tif"
+		forest_normalized = out_02 / "FOREST_NORMALIZED.tif"
 		if not dem_filled.exists():
 			raise RuntimeError(
 				"Missing preprocessed DEM for step 6 only mode: "
 				f"{dem_filled}. Run full pipeline first (steps 1-5)."
 			)
+		if forest_path is not None and not forest_normalized.exists():
+			raise RuntimeError(
+				"Missing normalized forest raster for step 6 only mode: "
+				f"{forest_normalized}. Run full pipeline first (steps 1-5)."
+			)
 
-		flowpy_forest_for_step6 = flowpy_forest
-		if (
-			forest_path is not None
-			and flowpy_forest.resolve() == forest_path.resolve()
-			and forest_aligned.exists()
-		):
-			flowpy_forest_for_step6 = forest_aligned
+		flowpy_forest_for_step6 = forest_normalized if forest_normalized.exists() else None
 
 		print("[only-step6] Running Flow-Py per basin using existing outputs...")
 		step_06_flowpy_per_basin(
@@ -600,7 +599,7 @@ def main() -> None:
 	step_01_inputs(dem_path=dem_path, forest_path=forest_path, out_dir=out_01)
 
 	print("[2/6] Preprocessing DEM and aligning forest raster...")
-	dem_filled, forest_aligned = step_02_preprocess_dem(
+	dem_filled, forest_aligned, forest_normalized = step_02_preprocess_dem(
 		dem_path=dem_path,
 		out_dir=out_02,
 		forest_path=forest_path,
@@ -608,9 +607,7 @@ def main() -> None:
 	)
 
 	pra_forest_path = forest_aligned if forest_aligned is not None else forest_path
-	flowpy_forest_for_run = flowpy_forest
-	if forest_path is not None and flowpy_forest.resolve() == forest_path.resolve() and forest_aligned is not None:
-		flowpy_forest_for_run = forest_aligned
+	flowpy_forest_for_run = forest_normalized
 
 	print("[3/6] Computing PRA...")
 	pra_outputs = step_03_pra_autoates(

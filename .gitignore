@@ -13,6 +13,7 @@ __pycache__/
 
 # Project data folders (requested)
 outputs/
+grassdata/
 
 # Local/editor/system files
 .vscode/
