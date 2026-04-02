@@ -10,6 +10,7 @@ Execution order (current MVP):
 6) Run Flow-Py once per `pra_basin_*.tif`
 7) Post-process Flow-Py outputs to one GeoJSON
 8) Compute `exposure_zdelta_cellcount.tif` for each new Flow-Py `res_*`
+9) Compute slope+forest ATES classes from DEM slope + forest density
 
 Each step writes its own folder under `outputs/` so results can be reviewed
 individually.
@@ -28,6 +29,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from PostProcess_FlowPY.overhead_exposure import compute_overhead_exposure_from_files
 from PREPROCESSING.preprocess import align_forest_to_dem, fill_dem_simple, normalize_forest_for_flowpy
+from PostProcess_FlowPY.SlopeandForest_Classification import run_slope_and_forest_classification
 
 
 def _abs_path_from_app(path_str: str) -> Path:
@@ -291,6 +293,27 @@ def step_07_postprocess_flowpy(
 	return out_geojson
 
 
+def step_09_slope_and_forest_classification(
+	dem_path: Path,
+	forest_pcc_path: Path,
+	out_dir: Path,
+	forest_window: int,
+	slope_sigma: float,
+	forest_adjustment: str,
+) -> Path:
+	"""Compute ATES classes from slope and forest density (0..4: null-simple-challenging-complex-extreme)."""
+	_ensure_dir(out_dir)
+	out_ates = out_dir / "SlopeandForest_Classification.tif"
+	return run_slope_and_forest_classification(
+		dem_path=dem_path,
+		pcc_path=forest_pcc_path,
+		out_path=out_ates,
+		forest_window=forest_window,
+		slope_sigma=slope_sigma,
+		forest_adjustment=forest_adjustment,
+	)
+
+
 def _load_flowpy_entrypoint(flowpy_dir: Path) -> Callable[[List[str], Dict[str, str]], None]:
 	"""Load Flow-Py terminal entrypoint without executing its __main__ block."""
 	flowpy_main = (flowpy_dir / "main.py").resolve()
@@ -401,11 +424,16 @@ def _create_flowpy_exposure_layer(flowpy_res_dir: Path) -> Optional[Path]:
 	return None
 
 
-def _create_flowpy_zdelta_cellcount_exposure_layer(flowpy_res_dir: Path) -> Optional[Path]:
-	"""Create exposure_zdelta_cellcount.tif from cell_counts + z_delta outputs."""
+def _create_flowpy_zdelta_cellcount_exposure_layer(
+	flowpy_res_dir: Path,
+	definitive_layers_dir: Path,
+	basin_id: int,
+) -> Optional[Path]:
+	"""Create Exposure_zdelta_cellcount_basinX.tif in Definitive_Layers."""
 	cell_counts_path = flowpy_res_dir / "cell_counts.tif"
 	z_delta_path = flowpy_res_dir / "z_delta.tif"
-	out_path = flowpy_res_dir / "exposure_zdelta_cellcount.tif"
+	_ensure_dir(definitive_layers_dir)
+	out_path = definitive_layers_dir / f"Exposure_zdelta_cellcount_basin{basin_id}.tif"
 
 	if not cell_counts_path.exists() or not z_delta_path.exists():
 		return None
@@ -421,6 +449,7 @@ def step_06_flowpy_per_basin(
 	dem_path: Path,
 	watershed_out_dir: Path,
 	flowpy_out_dir: Path,
+	definitive_layers_dir: Path,
 	flowpy_dir: Path,
 	alpha: int,
 	exponent: int,
@@ -450,7 +479,7 @@ def step_06_flowpy_per_basin(
 	created_run_dirs: List[Path] = []
 
 	total = len(pra_basin_files)
-	for idx, (_, pra_basin_path) in enumerate(pra_basin_files, start=1):
+	for idx, (basin_id, pra_basin_path) in enumerate(pra_basin_files, start=1):
 		run_dir = flowpy_out_dir / pra_basin_path.stem
 		_ensure_dir(run_dir)
 		prev_res_dirs = {p.resolve() for p in run_dir.glob("res_*") if p.is_dir()}
@@ -486,7 +515,11 @@ def step_06_flowpy_per_basin(
 			exposure_path = _create_flowpy_exposure_layer(flowpy_res_dir)
 			if exposure_path is not None:
 				print(f"        exposure: {exposure_path.name}")
-			exposure_zdelta_cellcount_path = _create_flowpy_zdelta_cellcount_exposure_layer(flowpy_res_dir)
+			exposure_zdelta_cellcount_path = _create_flowpy_zdelta_cellcount_exposure_layer(
+				flowpy_res_dir=flowpy_res_dir,
+				definitive_layers_dir=definitive_layers_dir,
+				basin_id=basin_id,
+			)
 			if exposure_zdelta_cellcount_path is not None:
 				print(f"        exposure_zdelta_cellcount: {exposure_zdelta_cellcount_path.name}")
 		created_run_dirs.append(run_dir)
@@ -495,7 +528,7 @@ def step_06_flowpy_per_basin(
 
 
 def parse_args() -> argparse.Namespace:
-	parser = argparse.ArgumentParser(description="Run APP_ATES_PABLO pipeline (steps 1-8).")
+	parser = argparse.ArgumentParser(description="Run APP_ATES_PABLO pipeline (steps 1-9).")
 	parser.add_argument("--dem", default="inputs/DEM_BOW_SUMMIT.tif", help="Path to input DEM (GeoTIFF)")
 	parser.add_argument("--forest", default="inputs/FOREST_BOW_SUMMIT.tif", help="Path to forest density raster (GeoTIFF)")
 	parser.add_argument(
@@ -522,9 +555,9 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument(
 		"--until-n",
 		type=int,
-		choices=range(1, 9),
+		choices=range(1, 10),
 		default=None,
-		help="Run pipeline from step 1 up to step N (N in 1..8)",
+		help="Run pipeline from step 1 up to step N (N in 1..9)",
 	)
 
 	# PRA parameters (keep defaults aligned with script docstring)
@@ -570,6 +603,29 @@ def parse_args() -> argparse.Namespace:
 		default=None,
 		help="Optional infrastructure raster passed to Flow-Py as infra=...",
 	)
+
+	# --- Slope + Forest classification (step 9)
+	parser.add_argument(
+		"--ates-forest-window",
+		type=int,
+		default=5,
+		help="Moving window size for forest density smoothing (odd integer, default: 5)",
+	)
+	parser.add_argument(
+		"--ates-slope-sigma",
+		type=float,
+		default=1.0,
+		help="Gaussian sigma to smooth slope in degrees (default: 1.0)",
+	)
+	parser.add_argument(
+		"--ates-forest-adjustment",
+		choices=("legacy", "conservative", "paper_pra", "paper_runout"),
+		default="paper_pra",
+		help=(
+			"Forest downgrading profile for step 9: paper_pra (default), "
+			"paper_runout, legacy, or conservative (alias of paper_pra)."
+		),
+	)
 	args = parser.parse_args()
 	if args.only_step6 and args.until_n is not None:
 		parser.error("--only-step6 cannot be used together with --until-n")
@@ -593,6 +649,8 @@ def main() -> None:
 	out_05 = outputs_dir / "Watershed_Subdivisions"
 	out_06 = outputs_dir / "Flow-Py"
 	out_07 = outputs_dir / "Avalanche_Shapes"
+	out_08 = outputs_dir / "Definitive_Layers"
+	out_09 = outputs_dir / "SlopeandForest_Classification"
 
 	if args.only_step6:
 		dem_filled = out_02 / "dem_filled_simple.tif"
@@ -615,6 +673,7 @@ def main() -> None:
 			dem_path=dem_filled,
 			watershed_out_dir=out_05,
 			flowpy_out_dir=out_06,
+			definitive_layers_dir=out_08,
 			flowpy_dir=flowpy_dir,
 			alpha=args.flowpy_alpha,
 			exponent=args.flowpy_exponent,
@@ -723,6 +782,7 @@ def main() -> None:
 		dem_path=dem_filled,
 		watershed_out_dir=out_05,
 		flowpy_out_dir=out_06,
+		definitive_layers_dir=out_08,
 		flowpy_dir=flowpy_dir,
 		alpha=args.flowpy_alpha,
 		exponent=args.flowpy_exponent,
@@ -751,6 +811,24 @@ def main() -> None:
 	print("[8] Overhead exposure (z_delta + cell_count) generated per new Flow-Py result.")
 	if until_n == 8:
 		print("Stopped at step 8 (--until-n).")
+		print(f"Outputs base dir: {outputs_dir}")
+		return
+
+	print("[9] Computing slope + forest ATES classification...")
+	forest_for_ates = forest_aligned if forest_aligned is not None else forest_path
+	if forest_for_ates is None:
+		raise RuntimeError("Step 9 requires a forest PCC raster (provide --forest).")
+	ates_path = step_09_slope_and_forest_classification(
+		dem_path=dem_filled,
+		forest_pcc_path=forest_for_ates,
+		out_dir=out_09,
+		forest_window=args.ates_forest_window,
+		slope_sigma=args.ates_slope_sigma,
+		forest_adjustment=args.ates_forest_adjustment,
+	)
+	print(f"        slope_forest_classification: {ates_path.name}")
+	if until_n == 9:
+		print("Stopped at step 9 (--until-n).")
 		print(f"Outputs base dir: {outputs_dir}")
 		return
 
