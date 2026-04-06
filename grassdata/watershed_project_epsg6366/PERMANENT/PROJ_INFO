@@ -1,6 +1,0 @@
-name: Mexico ITRF2008 / UTM zone 11N
-ellps: grs80
-proj: utm
-zone: 11
-towgs84: 0,0,0,0,0,0,0
-no_defs: defined

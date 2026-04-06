@@ -1,7 +1,0 @@
-COMMAND: r.to.vect --overwrite input="SUBDIVISIONS_OUTPUT" output="SUBDIV_AREAS_VEC" type="area" column="value"
-GISDBASE: C:\Users\pablo\Desktop\TFG\APP_ATES_PABLO\grassdata
-LOCATION: watershed_project MAPSET: NOUDIRECTORIDEMAPES USER: pablo DATE: Tue Mar 24 11:47:27 2026
----------------------------------------------------------------------------------
-COMMAND: v.type --overwrite input="SUBDIV_AREAS_VEC" layer="-1" output="SUBDIV_LINES_VEC" from_type="boundary" to_type="line"
-GISDBASE: C:\Users\pablo\Desktop\TFG\APP_ATES_PABLO\grassdata
-LOCATION: watershed_project MAPSET: NOUDIRECTORIDEMAPES USER: pablo DATE: Tue Mar 24 11:47:29 2026
