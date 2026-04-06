@@ -33,23 +33,23 @@ El pipeline principal ([main.py](main.py)) executa 11 passos:
 
 7. Postprocess Flow-Py a GeoJSON unic
    - Exporta poligons d'allaus des de `source_ids_bitmask.tif`.
-   - Sortida: `outputs/Avalanche_Shapes/avalanche_shapes.geojson`.
+   - Sortida: `outputs/results_DDHHMM/Definitive_Layers/avalanche_shapes.geojson`.
 
 8. Overhead exposure (nou modul)
    - Per cada `res_*`, combina `cell_counts.tif` i `z_delta.tif`.
-   - Escriu a `outputs/Definitive_Layers/BasinX/Exposure_zdelta_cellcount.tif`.
+   - Escriu a `outputs/results_DDHHMM/Definitive_Layers/BasinX/Exposure_zdelta_cellcount.tif`.
    - Implementat a [PostProcess_FlowPY/overhead_exposure.py](PostProcess_FlowPY/overhead_exposure.py).
 
 9. Classificacio ATES per pendent + bosc (nou modul)
    - Calcula classes ATES finals des de DEM + PCC forestal.
-   - Sortida: `outputs/SlopeandForest_Classification/SlopeandForest_Classification.tif`.
+   - Sortida: `outputs/results_DDHHMM/Definitive_Layers/SlopeandForest_Classification.tif`.
    - Implementat a [PostProcess_FlowPY/SlopeandForest_Classification.py](PostProcess_FlowPY/SlopeandForest_Classification.py).
 
 10. Landforms per curvatura a multiples escales (nou modul)
    - Calcula landforms amb curvatura de perfil + curvatura de pla/tangencial.
    - Genera 3 capes amb diferents veinatges: 3x3, 6x6 i 12x12.
    - Per cada capa també genera un fitxer QML amb la simbologia de classes 1..9.
-   - Sortides a `outputs/Definitive_Layers/`:
+   - Sortides a `outputs/results_DDHHMM/Definitive_Layers/`:
      - `Landforms_curvature_3x3.tif`
      - `Landforms_curvature_6x6.tif`
      - `Landforms_curvature_12x12.tif`
@@ -63,8 +63,8 @@ El pipeline principal ([main.py](main.py)) executa 11 passos:
        - propagacio: la resta
     - Guarda un raster per cada allau dins de cada basin.
     - Ruta de sortida per basin:
-      - `outputs/Definitive_Layers/BasinX/Star_propagating_Ending_Zones/Ava_Y.tif`
-      - `outputs/Definitive_Layers/BasinX/Star_propagating_Ending_Zones/index.csv`
+      - `outputs/results_DDHHMM/Definitive_Layers/BasinX/Star_propagating_Ending_Zones/Ava_Y.tif`
+      - `outputs/results_DDHHMM/Definitive_Layers/BasinX/Star_propagating_Ending_Zones/index.csv`
     - Implementat a [PostProcess_FlowPY/start_propagating_ending_zones.py](PostProcess_FlowPY/start_propagating_ending_zones.py).
 
 ## Moduls del projecte
@@ -88,15 +88,14 @@ El pipeline principal ([main.py](main.py)) executa 11 passos:
   - `FOREST_BOW_SUMMIT.tif` (default)
 
 - `outputs/`
+   - `results_DDHHMM/`
   - `Inputs/`
   - `Preprocess/`
   - `PRA_AutoATES/`
   - `PRA_Divisor/`
   - `Watershed_Subdivisions/`
   - `Flow-Py/`
-  - `Avalanche_Shapes/`
   - `Definitive_Layers/`
-  - `SlopeandForest_Classification/`
 
 ## Requisits
 
@@ -123,6 +122,8 @@ python main.py
 
 Aixo executa el pipeline complet (1..11).
 
+Per defecte, cada execucio crea una carpeta nova a `outputs/results_DDHHMM` per evitar sobreescriptures.
+
 ### 1) Pipeline complet
 
 ```bash
@@ -136,9 +137,11 @@ python main.py --only-step6
 ```
 
 Prerequisits de `--only-step6`:
-- `outputs/Preprocess/dem_filled_simple.tif`
-- `outputs/Watershed_Subdivisions/pra_basin_*.tif`
-- Si s'ha passat `--forest`, tambe `outputs/Preprocess/FOREST_NORMALIZED.tif`
+- `<outputs-dir>/Preprocess/dem_filled_simple.tif`
+- `<outputs-dir>/Watershed_Subdivisions/pra_basin_*.tif`
+- Si s'ha passat `--forest`, tambe `<outputs-dir>/Preprocess/FOREST_NORMALIZED.tif`
+
+Nota addicional: si no passes `--outputs-dir`, `--only-step6` utilitza automaticament el darrer `outputs/results_*`.
 
 Nota: `--only-step6` i `--until-n` son incompatibles.
 
@@ -176,7 +179,7 @@ python main.py --until-n 11
 
 ```bash
 python main.py \
-  --outputs-dir outputs \
+   --outputs-dir outputs/results_custom \
   --watershed-threshold 15000 \
   --watershed-memory 2000 \
   --divisor-stream-threshold 300 \
@@ -190,7 +193,7 @@ Inputs:
 - `--dem inputs/DEM_BOW_SUMMIT.tif`
 - `--forest inputs/FOREST_BOW_SUMMIT.tif`
 - `--forest-type pcc`
-- `--outputs-dir outputs`
+- `--outputs-dir` (opcional; per defecte es crea `outputs/results_DDHHMM`)
 
 PRA (pas 3):
 - `--radius 6`
@@ -282,26 +285,26 @@ python PostProcess_FlowPY/start_propagating_ending_zones.py --help
 
 ## Sortides principals
 
-- `outputs/Inputs/inputs.json`
-- `outputs/Preprocess/dem_filled_simple.tif`
-- `outputs/Preprocess/forest_aligned.tif`
-- `outputs/Preprocess/FOREST_NORMALIZED.tif`
-- `outputs/PRA_AutoATES/PRA_binary.tif`
-- `outputs/PRA_Divisor/pra_assigned_junction.tif`
-- `outputs/Watershed_Subdivisions/basins.tif`
-- `outputs/Watershed_Subdivisions/pra_basin_*.tif`
-- `outputs/Flow-Py/pra_basin_*/res_YYYYMMDD_HHMMSS/*`
-- `outputs/Avalanche_Shapes/avalanche_shapes.geojson`
-- `outputs/Definitive_Layers/BasinX/Exposure_zdelta_cellcount.tif`
-- `outputs/Definitive_Layers/Landforms_curvature_3x3.tif`
-- `outputs/Definitive_Layers/Landforms_curvature_3x3.qml`
-- `outputs/Definitive_Layers/Landforms_curvature_6x6.tif`
-- `outputs/Definitive_Layers/Landforms_curvature_6x6.qml`
-- `outputs/Definitive_Layers/Landforms_curvature_12x12.tif`
-- `outputs/Definitive_Layers/Landforms_curvature_12x12.qml`
-- `outputs/Definitive_Layers/BasinX/Star_propagating_Ending_Zones/Ava_Y.tif`
-- `outputs/Definitive_Layers/BasinX/Star_propagating_Ending_Zones/index.csv`
-- `outputs/SlopeandForest_Classification/SlopeandForest_Classification.tif`
+- `outputs/results_DDHHMM/Inputs/inputs.json`
+- `outputs/results_DDHHMM/Preprocess/dem_filled_simple.tif`
+- `outputs/results_DDHHMM/Preprocess/forest_aligned.tif`
+- `outputs/results_DDHHMM/Preprocess/FOREST_NORMALIZED.tif`
+- `outputs/results_DDHHMM/PRA_AutoATES/PRA_binary.tif`
+- `outputs/results_DDHHMM/PRA_Divisor/pra_assigned_junction.tif`
+- `outputs/results_DDHHMM/Watershed_Subdivisions/basins.tif`
+- `outputs/results_DDHHMM/Watershed_Subdivisions/pra_basin_*.tif`
+- `outputs/results_DDHHMM/Flow-Py/pra_basin_*/res_YYYYMMDD_HHMMSS/*`
+- `outputs/results_DDHHMM/Definitive_Layers/avalanche_shapes.geojson`
+- `outputs/results_DDHHMM/Definitive_Layers/BasinX/Exposure_zdelta_cellcount.tif`
+- `outputs/results_DDHHMM/Definitive_Layers/Landforms_curvature_3x3.tif`
+- `outputs/results_DDHHMM/Definitive_Layers/Landforms_curvature_3x3.qml`
+- `outputs/results_DDHHMM/Definitive_Layers/Landforms_curvature_6x6.tif`
+- `outputs/results_DDHHMM/Definitive_Layers/Landforms_curvature_6x6.qml`
+- `outputs/results_DDHHMM/Definitive_Layers/Landforms_curvature_12x12.tif`
+- `outputs/results_DDHHMM/Definitive_Layers/Landforms_curvature_12x12.qml`
+- `outputs/results_DDHHMM/Definitive_Layers/BasinX/Star_propagating_Ending_Zones/Ava_Y.tif`
+- `outputs/results_DDHHMM/Definitive_Layers/BasinX/Star_propagating_Ending_Zones/index.csv`
+- `outputs/results_DDHHMM/Definitive_Layers/SlopeandForest_Classification.tif`
 
 ## Notes
 

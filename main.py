@@ -21,6 +21,7 @@ individually.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import importlib.util
 import json
 import re
@@ -46,6 +47,15 @@ def _abs_path_from_app(path_str: str) -> Path:
 
 def _ensure_dir(path: Path) -> None:
 	path.mkdir(parents=True, exist_ok=True)
+
+
+def _latest_results_dir(outputs_root: Path) -> Optional[Path]:
+	if not outputs_root.exists():
+		return None
+	candidates = [p for p in outputs_root.glob("results_*") if p.is_dir()]
+	if not candidates:
+		return None
+	return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
 def _raster_epsg(path: Path) -> Optional[str]:
@@ -583,8 +593,11 @@ def parse_args() -> argparse.Namespace:
 	)
 	parser.add_argument(
 		"--outputs-dir",
-		default="outputs",
-		help="Base output folder (relative to APP_ATES_PABLO by default)",
+		default=None,
+		help=(
+			"Base output folder. If omitted, full runs create outputs/results_DDHHMM "
+			"and --only-step6 uses latest outputs/results_*"
+		),
 	)
 	parser.add_argument(
 		"--only-step6",
@@ -712,7 +725,22 @@ def main() -> None:
 	until_n = args.until_n
 	dem_path = _abs_path_from_app(args.dem)
 	forest_path = None if args.forest is None else _abs_path_from_app(args.forest)
-	outputs_dir = _abs_path_from_app(args.outputs_dir)
+	app_root = Path(__file__).resolve().parent
+	outputs_root = (app_root / "outputs").resolve()
+	if args.outputs_dir is None:
+		if args.only_step6:
+			latest = _latest_results_dir(outputs_root)
+			if latest is None:
+				raise RuntimeError(
+					"--only-step6 needs previous outputs, but no outputs/results_* folder was found. "
+					"Run full pipeline first or pass --outputs-dir explicitly."
+				)
+			outputs_dir = latest
+		else:
+			run_stamp = datetime.now().strftime("%d%H%M")
+			outputs_dir = (outputs_root / f"results_{run_stamp}").resolve()
+	else:
+		outputs_dir = _abs_path_from_app(args.outputs_dir)
 	flowpy_dir = _abs_path_from_app(args.flowpy_dir)
 	flowpy_infra = None if args.flowpy_infra is None else _abs_path_from_app(args.flowpy_infra)
 
@@ -723,9 +751,9 @@ def main() -> None:
 	out_04 = outputs_dir / "PRA_Divisor"
 	out_05 = outputs_dir / "Watershed_Subdivisions"
 	out_06 = outputs_dir / "Flow-Py"
-	out_07 = outputs_dir / "Avalanche_Shapes"
 	out_08 = outputs_dir / "Definitive_Layers"
-	out_09 = outputs_dir / "SlopeandForest_Classification"
+	out_07 = out_08
+	out_09 = out_08
 
 	if args.only_step6:
 		dem_filled = out_02 / "dem_filled_simple.tif"
