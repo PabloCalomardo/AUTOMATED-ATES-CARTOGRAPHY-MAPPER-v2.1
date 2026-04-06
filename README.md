@@ -4,7 +4,7 @@ Pipeline en Python per generar Potential Release Areas (PRA) i productes derivat
 
 ## Que fa (estat actual)
 
-El pipeline principal ([main.py](main.py)) executa 10 passos:
+El pipeline principal ([main.py](main.py)) executa 11 passos:
 
 1. Validacio d'inputs
    - Comprova que existeixen DEM i forest.
@@ -37,7 +37,7 @@ El pipeline principal ([main.py](main.py)) executa 10 passos:
 
 8. Overhead exposure (nou modul)
    - Per cada `res_*`, combina `cell_counts.tif` i `z_delta.tif`.
-   - Escriu a `outputs/Definitive_Layers/Exposure_zdelta_cellcount_basinX.tif`.
+   - Escriu a `outputs/Definitive_Layers/BasinX/Exposure_zdelta_cellcount.tif`.
    - Implementat a [PostProcess_FlowPY/overhead_exposure.py](PostProcess_FlowPY/overhead_exposure.py).
 
 9. Classificacio ATES per pendent + bosc (nou modul)
@@ -55,9 +55,21 @@ El pipeline principal ([main.py](main.py)) executa 10 passos:
      - `Landforms_curvature_12x12.tif`
    - Implementat a [PostProcess_FlowPY/landforms_multiscale.py](PostProcess_FlowPY/landforms_multiscale.py).
 
+11. Zones d'inici, propagacio i frenada per allau (nou modul)
+    - Usa `flux.tif` (energia 0..1) i `source_ids_bitmask.tif` per basin.
+    - Llindars configurables:
+       - inici: `flux >= 0.99` (default)
+       - frenada: `flux < 0.075` (default)
+       - propagacio: la resta
+    - Guarda un raster per cada allau dins de cada basin.
+    - Ruta de sortida per basin:
+      - `outputs/Definitive_Layers/BasinX/Star_propagating_Ending_Zones/Ava_Y.tif`
+      - `outputs/Definitive_Layers/BasinX/Star_propagating_Ending_Zones/index.csv`
+    - Implementat a [PostProcess_FlowPY/start_propagating_ending_zones.py](PostProcess_FlowPY/start_propagating_ending_zones.py).
+
 ## Moduls del projecte
 
-- [main.py](main.py): orquestrador principal (passos 1..9).
+- [main.py](main.py): orquestrador principal (passos 1..11).
 - [PREPROCESSING/preprocess.py](PREPROCESSING/preprocess.py): preprocessat DEM/forest.
 - [PRAs/PRA_AutoATES-v2.0.py](PRAs/PRA_AutoATES-v2.0.py): calcul PRA.
 - [PRAs/PRA_Divisor.py](PRAs/PRA_Divisor.py): divisio PRA per drenatge.
@@ -66,6 +78,7 @@ El pipeline principal ([main.py](main.py)) executa 10 passos:
 - [PostProcess_FlowPY/overhead_exposure.py](PostProcess_FlowPY/overhead_exposure.py): capa d'exposicio z_delta + cell_count.
 - [PostProcess_FlowPY/SlopeandForest_Classification.py](PostProcess_FlowPY/SlopeandForest_Classification.py): classes ATES de pendent+bosc.
 - [PostProcess_FlowPY/landforms_multiscale.py](PostProcess_FlowPY/landforms_multiscale.py): landforms multiescala per curvatura (3x3, 6x6, 12x12).
+- [PostProcess_FlowPY/start_propagating_ending_zones.py](PostProcess_FlowPY/start_propagating_ending_zones.py): zones inici/propagacio/frenada per allau i basin.
 - [Flow-py_Autoates_Editat/FlowPy_detrainment/main.py](Flow-py_Autoates_Editat/FlowPy_detrainment/main.py): motor Flow-Py (invocat dinamicament).
 
 ## Estructura de carpetes
@@ -108,7 +121,7 @@ Des de l'arrel del projecte:
 python main.py
 ```
 
-Aixo executa el pipeline complet (1..10).
+Aixo executa el pipeline complet (1..11).
 
 ### 1) Pipeline complet
 
@@ -135,7 +148,7 @@ Nota: `--only-step6` i `--until-n` son incompatibles.
 python main.py --until-n N
 ```
 
-On `N` pot ser de `1` a `10`.
+On `N` pot ser de `1` a `11`.
 
 Exemples:
 
@@ -154,6 +167,9 @@ python main.py --until-n 8
 
 # passos 1..10
 python main.py --until-n 10
+
+# passos 1..11
+python main.py --until-n 11
 ```
 
 ### 4) Execucio amb parametres personalitzats
@@ -216,6 +232,10 @@ Landforms (pas 10):
 - `--landform-curvature-threshold 1e-4`
 - `--landform-flat-gradient-eps 1e-10`
 
+Zones inici/propagacio/frenada (pas 11):
+- `--zones-start-threshold 0.99`
+- `--zones-ending-threshold 0.075`
+
 ## Execucio de moduls per separat (opcional)
 
 PRA divisor:
@@ -254,6 +274,12 @@ Landforms multiescala per curvatura:
 python PostProcess_FlowPY/landforms_multiscale.py --help
 ```
 
+Zones inici/propagacio/frenada per allau:
+
+```bash
+python PostProcess_FlowPY/start_propagating_ending_zones.py --help
+```
+
 ## Sortides principals
 
 - `outputs/Inputs/inputs.json`
@@ -266,13 +292,15 @@ python PostProcess_FlowPY/landforms_multiscale.py --help
 - `outputs/Watershed_Subdivisions/pra_basin_*.tif`
 - `outputs/Flow-Py/pra_basin_*/res_YYYYMMDD_HHMMSS/*`
 - `outputs/Avalanche_Shapes/avalanche_shapes.geojson`
-- `outputs/Definitive_Layers/Exposure_zdelta_cellcount_basinX.tif`
+- `outputs/Definitive_Layers/BasinX/Exposure_zdelta_cellcount.tif`
 - `outputs/Definitive_Layers/Landforms_curvature_3x3.tif`
 - `outputs/Definitive_Layers/Landforms_curvature_3x3.qml`
 - `outputs/Definitive_Layers/Landforms_curvature_6x6.tif`
 - `outputs/Definitive_Layers/Landforms_curvature_6x6.qml`
 - `outputs/Definitive_Layers/Landforms_curvature_12x12.tif`
 - `outputs/Definitive_Layers/Landforms_curvature_12x12.qml`
+- `outputs/Definitive_Layers/BasinX/Star_propagating_Ending_Zones/Ava_Y.tif`
+- `outputs/Definitive_Layers/BasinX/Star_propagating_Ending_Zones/index.csv`
 - `outputs/SlopeandForest_Classification/SlopeandForest_Classification.tif`
 
 ## Notes

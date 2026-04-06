@@ -12,6 +12,7 @@ Execution order (current MVP):
 8) Compute `exposure_zdelta_cellcount.tif` for each new Flow-Py `res_*`
 9) Compute slope+forest ATES classes from DEM slope + forest density
 10) Compute multiscale curvature-based landforms from DEM (3x3, 6x6, 12x12)
+11) Compute start/propagating/ending zones per avalanche and basin from flux
 
 Each step writes its own folder under `outputs/` so results can be reviewed
 individually.
@@ -32,6 +33,7 @@ from PostProcess_FlowPY.overhead_exposure import compute_overhead_exposure_from_
 from PREPROCESSING.preprocess import align_forest_to_dem, fill_dem_simple, normalize_forest_for_flowpy
 from PostProcess_FlowPY.SlopeandForest_Classification import run_slope_and_forest_classification
 from PostProcess_FlowPY.landforms_multiscale import run_landforms_multiscale
+from PostProcess_FlowPY.start_propagating_ending_zones import run_for_all_basins as run_start_propagating_ending_zones
 
 
 def _abs_path_from_app(path_str: str) -> Path:
@@ -334,6 +336,22 @@ def step_10_landforms_multiscale(
 	)
 
 
+def step_11_start_propagating_ending_zones(
+	flowpy_out_dir: Path,
+	definitive_layers_dir: Path,
+	start_threshold: float,
+	ending_threshold: float,
+) -> List[Path]:
+	"""Compute start/propagating/ending zones per avalanche in each basin."""
+	_ensure_dir(definitive_layers_dir)
+	return run_start_propagating_ending_zones(
+		flowpy_root=flowpy_out_dir,
+		definitive_layers_dir=definitive_layers_dir,
+		start_threshold=start_threshold,
+		ending_threshold=ending_threshold,
+	)
+
+
 def _load_flowpy_entrypoint(flowpy_dir: Path) -> Callable[[List[str], Dict[str, str]], None]:
 	"""Load Flow-Py terminal entrypoint without executing its __main__ block."""
 	flowpy_main = (flowpy_dir / "main.py").resolve()
@@ -449,11 +467,12 @@ def _create_flowpy_zdelta_cellcount_exposure_layer(
 	definitive_layers_dir: Path,
 	basin_id: int,
 ) -> Optional[Path]:
-	"""Create Exposure_zdelta_cellcount_basinX.tif in Definitive_Layers."""
+	"""Create BasinX/Exposure_zdelta_cellcount.tif in Definitive_Layers."""
 	cell_counts_path = flowpy_res_dir / "cell_counts.tif"
 	z_delta_path = flowpy_res_dir / "z_delta.tif"
-	_ensure_dir(definitive_layers_dir)
-	out_path = definitive_layers_dir / f"Exposure_zdelta_cellcount_basin{basin_id}.tif"
+	basin_dir = definitive_layers_dir / f"Basin{basin_id}"
+	_ensure_dir(basin_dir)
+	out_path = basin_dir / "Exposure_zdelta_cellcount.tif"
 
 	if not cell_counts_path.exists() or not z_delta_path.exists():
 		return None
@@ -548,7 +567,7 @@ def step_06_flowpy_per_basin(
 
 
 def parse_args() -> argparse.Namespace:
-	parser = argparse.ArgumentParser(description="Run APP_ATES_PABLO pipeline (steps 1-10).")
+	parser = argparse.ArgumentParser(description="Run APP_ATES_PABLO pipeline (steps 1-11).")
 	parser.add_argument("--dem", default="inputs/DEM_BOW_SUMMIT.tif", help="Path to input DEM (GeoTIFF)")
 	parser.add_argument("--forest", default="inputs/FOREST_BOW_SUMMIT.tif", help="Path to forest density raster (GeoTIFF)")
 	parser.add_argument(
@@ -575,9 +594,9 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument(
 		"--until-n",
 		type=int,
-		choices=range(1, 11),
+		choices=range(1, 12),
 		default=None,
-		help="Run pipeline from step 1 up to step N (N in 1..10)",
+		help="Run pipeline from step 1 up to step N (N in 1..11)",
 	)
 
 	# PRA parameters (keep defaults aligned with script docstring)
@@ -666,9 +685,25 @@ def parse_args() -> argparse.Namespace:
 		help="Minimum gradient^2 to compute curvature and avoid unstable flat areas",
 	)
 
+	# --- Start/propagating/ending zones (step 11)
+	parser.add_argument(
+		"--zones-start-threshold",
+		type=float,
+		default=0.99,
+		help="Flux threshold for start zone (flux >= threshold)",
+	)
+	parser.add_argument(
+		"--zones-ending-threshold",
+		type=float,
+		default=0.075,
+		help="Flux threshold for ending zone (flux < threshold)",
+	)
+
 	args = parser.parse_args()
 	if args.only_step6 and args.until_n is not None:
 		parser.error("--only-step6 cannot be used together with --until-n")
+	if args.zones_start_threshold <= args.zones_ending_threshold:
+		parser.error("--zones-start-threshold must be greater than --zones-ending-threshold")
 	return args
 
 
@@ -884,6 +919,20 @@ def main() -> None:
 		print(f"        landforms: {landform_path.name}")
 	if until_n == 10:
 		print("Stopped at step 10 (--until-n).")
+		print(f"Outputs base dir: {outputs_dir}")
+		return
+
+	print("[11] Computing start/propagating/ending zones per basin and avalanche...")
+	zone_outputs = step_11_start_propagating_ending_zones(
+		flowpy_out_dir=out_06,
+		definitive_layers_dir=out_08,
+		start_threshold=args.zones_start_threshold,
+		ending_threshold=args.zones_ending_threshold,
+	)
+	for zone_path in zone_outputs:
+		print(f"        zones: {zone_path}")
+	if until_n == 11:
+		print("Stopped at step 11 (--until-n).")
 		print(f"Outputs base dir: {outputs_dir}")
 		return
 
