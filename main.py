@@ -12,7 +12,8 @@ Execution order (current MVP):
 8) Compute `exposure_zdelta_cellcount.tif` for each new Flow-Py `res_*`
 9) Compute slope+forest ATES classes from DEM slope + forest density
 10) Compute multiscale curvature-based landforms from DEM (3x3, 6x6, 12x12)
-11) Compute start/propagating/ending zones per avalanche and basin from flux
+11) Compute terrain traps from DEM + forest + landforms + Flow-Py z_delta
+12) Compute start/propagating/ending zones per avalanche and basin from flux
 
 Each step writes its own folder under `outputs/` so results can be reviewed
 individually.
@@ -34,6 +35,7 @@ from PostProcess_FlowPY.overhead_exposure import compute_overhead_exposure_from_
 from PREPROCESSING.preprocess import align_forest_to_dem, fill_dem_simple, normalize_forest_for_flowpy
 from PostProcess_FlowPY.SlopeandForest_Classification import run_slope_and_forest_classification
 from PostProcess_FlowPY.landforms_multiscale import run_landforms_multiscale
+from PostProcess_FlowPY.terrain_traps import detect_terrain_traps
 from PostProcess_FlowPY.start_propagating_ending_zones import run_for_all_basins as run_start_propagating_ending_zones
 
 
@@ -346,7 +348,30 @@ def step_10_landforms_multiscale(
 	)
 
 
-def step_11_start_propagating_ending_zones(
+def step_11_terrain_traps(
+	dem_path: Path,
+	forest_path: Path,
+	definitive_layers_dir: Path,
+	flowpy_out_dir: Path,
+	forest_tree_threshold: float,
+	energy_trauma_threshold: float,
+	gully_energy_threshold: float,
+) -> List[Path]:
+	"""Detect terrain traps and write rasters in Definitive_Layers."""
+	_ensure_dir(definitive_layers_dir)
+	return detect_terrain_traps(
+		dem_path=dem_path,
+		forest_path=forest_path,
+		definitive_layers_dir=definitive_layers_dir,
+		flowpy_root=flowpy_out_dir,
+		out_dir=definitive_layers_dir,
+		forest_tree_threshold=forest_tree_threshold,
+		energy_trauma_threshold=energy_trauma_threshold,
+		gully_energy_threshold=gully_energy_threshold,
+	)
+
+
+def step_12_start_propagating_ending_zones(
 	flowpy_out_dir: Path,
 	definitive_layers_dir: Path,
 	start_threshold: float,
@@ -577,7 +602,7 @@ def step_06_flowpy_per_basin(
 
 
 def parse_args() -> argparse.Namespace:
-	parser = argparse.ArgumentParser(description="Run APP_ATES_PABLO pipeline (steps 1-11).")
+	parser = argparse.ArgumentParser(description="Run APP_ATES_PABLO pipeline (steps 1-12).")
 	parser.add_argument("--dem", default="inputs/DEM_BOW_SUMMIT.tif", help="Path to input DEM (GeoTIFF)")
 	parser.add_argument("--forest", default="inputs/FOREST_BOW_SUMMIT.tif", help="Path to forest density raster (GeoTIFF)")
 	parser.add_argument(
@@ -607,9 +632,9 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument(
 		"--until-n",
 		type=int,
-		choices=range(1, 12),
+		choices=range(1, 13),
 		default=None,
-		help="Run pipeline from step 1 up to step N (N in 1..11)",
+		help="Run pipeline from step 1 up to step N (N in 1..12)",
 	)
 
 	# PRA parameters (keep defaults aligned with script docstring)
@@ -698,7 +723,27 @@ def parse_args() -> argparse.Namespace:
 		help="Minimum gradient^2 to compute curvature and avoid unstable flat areas",
 	)
 
-	# --- Start/propagating/ending zones (step 11)
+	# --- Terrain traps (step 11)
+	parser.add_argument(
+		"--terrain-forest-tree-threshold",
+		type=float,
+		default=35.0,
+		help="Forest threshold (PCC-like units) for tree terrain traps",
+	)
+	parser.add_argument(
+		"--terrain-energy-trauma-threshold",
+		type=float,
+		default=0.35,
+		help="Normalized z_delta threshold for trauma terrain traps (trees/cliffs)",
+	)
+	parser.add_argument(
+		"--terrain-gully-energy-threshold",
+		type=float,
+		default=0.2,
+		help="Normalized z_delta threshold used by gully detection",
+	)
+
+	# --- Start/propagating/ending zones (step 12)
 	parser.add_argument(
 		"--zones-start-threshold",
 		type=float,
@@ -950,8 +995,28 @@ def main() -> None:
 		print(f"Outputs base dir: {outputs_dir}")
 		return
 
-	print("[11] Computing start/propagating/ending zones per basin and avalanche...")
-	zone_outputs = step_11_start_propagating_ending_zones(
+	print("[11] Detecting terrain traps (trees, cliffs/rocks, gullies, benches, lakes/creeks)...")
+	forest_for_terrain = forest_aligned if forest_aligned is not None else forest_path
+	if forest_for_terrain is None:
+		raise RuntimeError("Step 11 requires a forest raster (provide --forest).")
+	terrain_outputs = step_11_terrain_traps(
+		dem_path=dem_filled,
+		forest_path=forest_for_terrain,
+		definitive_layers_dir=out_08,
+		flowpy_out_dir=out_06,
+		forest_tree_threshold=args.terrain_forest_tree_threshold,
+		energy_trauma_threshold=args.terrain_energy_trauma_threshold,
+		gully_energy_threshold=args.terrain_gully_energy_threshold,
+	)
+	for terrain_path in terrain_outputs:
+		print(f"        terrain_traps: {terrain_path.name}")
+	if until_n == 11:
+		print("Stopped at step 11 (--until-n).")
+		print(f"Outputs base dir: {outputs_dir}")
+		return
+
+	print("[12] Computing start/propagating/ending zones per basin and avalanche...")
+	zone_outputs = step_12_start_propagating_ending_zones(
 		flowpy_out_dir=out_06,
 		definitive_layers_dir=out_08,
 		start_threshold=args.zones_start_threshold,
@@ -959,8 +1024,8 @@ def main() -> None:
 	)
 	for zone_path in zone_outputs:
 		print(f"        zones: {zone_path}")
-	if until_n == 11:
-		print("Stopped at step 11 (--until-n).")
+	if until_n == 12:
+		print("Stopped at step 12 (--until-n).")
 		print(f"Outputs base dir: {outputs_dir}")
 		return
 

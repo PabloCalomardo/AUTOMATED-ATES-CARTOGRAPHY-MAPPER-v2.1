@@ -4,7 +4,7 @@ Pipeline en Python per generar Potential Release Areas (PRA) i productes derivat
 
 ## Que fa (estat actual)
 
-El pipeline principal ([main.py](main.py)) executa 11 passos:
+El pipeline principal ([main.py](main.py)) executa 12 passos:
 
 1. Validacio d'inputs
    - Comprova que existeixen DEM i forest.
@@ -55,7 +55,22 @@ El pipeline principal ([main.py](main.py)) executa 11 passos:
      - `Landforms_curvature_12x12.tif`
    - Implementat a [PostProcess_FlowPY/landforms_multiscale.py](PostProcess_FlowPY/landforms_multiscale.py).
 
-11. Zones d'inici, propagacio i frenada per allau (nou modul)
+11. Terrain traps (nou modul)
+      - Detecta terrain traps a partir de DEM, bosc, landforms i energia `z_delta` de Flow-Py.
+   - Criteri clau: nomes classifica terrain trap on `z_delta > 0` (zona afectada per allau).
+      - Tipus detectats (segons avalanche.org):
+          - `Trees`
+          - `Cliffs / Rocks`
+          - `Gullies`
+          - `Road cuts / Benches`
+          - `Lakes / Creeks`
+      - Genera un raster bitmask i capes derivades de trauma/enterrament a:
+         - `outputs/results_DDHHMM/Definitive_Layers/Terrain_Traps_bitmask.tif`
+         - `outputs/results_DDHHMM/Definitive_Layers/Terrain_Traps_trauma_amplifiers.tif`
+         - `outputs/results_DDHHMM/Definitive_Layers/Terrain_Traps_burial_amplifiers.tif`
+      - Implementat a [PostProcess_FlowPY/terrain_traps.py](PostProcess_FlowPY/terrain_traps.py).
+
+12. Zones d'inici, propagacio i frenada per allau (nou modul)
     - Usa `flux.tif` (energia 0..1) i `source_ids_bitmask.tif` per basin.
     - Llindars configurables:
        - inici: `flux >= 0.99` (default)
@@ -69,7 +84,7 @@ El pipeline principal ([main.py](main.py)) executa 11 passos:
 
 ## Moduls del projecte
 
-- [main.py](main.py): orquestrador principal (passos 1..11).
+- [main.py](main.py): orquestrador principal (passos 1..12).
 - [PREPROCESSING/preprocess.py](PREPROCESSING/preprocess.py): preprocessat DEM/forest.
 - [PRAs/PRA_AutoATES-v2.0.py](PRAs/PRA_AutoATES-v2.0.py): calcul PRA.
 - [PRAs/PRA_Divisor.py](PRAs/PRA_Divisor.py): divisio PRA per drenatge.
@@ -78,6 +93,7 @@ El pipeline principal ([main.py](main.py)) executa 11 passos:
 - [PostProcess_FlowPY/overhead_exposure.py](PostProcess_FlowPY/overhead_exposure.py): capa d'exposicio z_delta + cell_count.
 - [PostProcess_FlowPY/SlopeandForest_Classification.py](PostProcess_FlowPY/SlopeandForest_Classification.py): classes ATES de pendent+bosc.
 - [PostProcess_FlowPY/landforms_multiscale.py](PostProcess_FlowPY/landforms_multiscale.py): landforms multiescala per curvatura (3x3, 6x6, 12x12).
+- [PostProcess_FlowPY/terrain_traps.py](PostProcess_FlowPY/terrain_traps.py): deteccio de terrain traps (trauma/enterrament) amb raster bitmask.
 - [PostProcess_FlowPY/start_propagating_ending_zones.py](PostProcess_FlowPY/start_propagating_ending_zones.py): zones inici/propagacio/frenada per allau i basin.
 - [Flow-py_Autoates_Editat/FlowPy_detrainment/main.py](Flow-py_Autoates_Editat/FlowPy_detrainment/main.py): motor Flow-Py (invocat dinamicament).
 
@@ -120,7 +136,7 @@ Des de l'arrel del projecte:
 python main.py
 ```
 
-Aixo executa el pipeline complet (1..11).
+Aixo executa el pipeline complet (1..12).
 
 Per defecte, cada execucio crea una carpeta nova a `outputs/results_DDHHMM` per evitar sobreescriptures.
 
@@ -151,7 +167,7 @@ Nota: `--only-step6` i `--until-n` son incompatibles.
 python main.py --until-n N
 ```
 
-On `N` pot ser de `1` a `11`.
+On `N` pot ser de `1` a `12`.
 
 Exemples:
 
@@ -173,6 +189,9 @@ python main.py --until-n 10
 
 # passos 1..11
 python main.py --until-n 11
+
+# passos 1..12
+python main.py --until-n 12
 ```
 
 ### 4) Execucio amb parametres personalitzats
@@ -235,7 +254,12 @@ Landforms (pas 10):
 - `--landform-curvature-threshold 1e-4`
 - `--landform-flat-gradient-eps 1e-10`
 
-Zones inici/propagacio/frenada (pas 11):
+Terrain traps (pas 11):
+- `--terrain-forest-tree-threshold 35.0`
+- `--terrain-energy-trauma-threshold 0.35`
+- `--terrain-gully-energy-threshold 0.2`
+
+Zones inici/propagacio/frenada (pas 12):
 - `--zones-start-threshold 0.99`
 - `--zones-ending-threshold 0.075`
 
@@ -277,6 +301,12 @@ Landforms multiescala per curvatura:
 python PostProcess_FlowPY/landforms_multiscale.py --help
 ```
 
+Terrain traps:
+
+```bash
+python PostProcess_FlowPY/terrain_traps.py --help
+```
+
 Zones inici/propagacio/frenada per allau:
 
 ```bash
@@ -302,6 +332,13 @@ python PostProcess_FlowPY/start_propagating_ending_zones.py --help
 - `outputs/results_DDHHMM/Definitive_Layers/Landforms_curvature_6x6.qml`
 - `outputs/results_DDHHMM/Definitive_Layers/Landforms_curvature_12x12.tif`
 - `outputs/results_DDHHMM/Definitive_Layers/Landforms_curvature_12x12.qml`
+- `outputs/results_DDHHMM/Definitive_Layers/Terrain_Traps_bitmask.tif`
+- `outputs/results_DDHHMM/Definitive_Layers/Terrain_Traps_bitmask.qml`
+- `outputs/results_DDHHMM/Definitive_Layers/Terrain_Traps_trauma_amplifiers.tif`
+- `outputs/results_DDHHMM/Definitive_Layers/Terrain_Traps_burial_amplifiers.tif`
+- `outputs/results_DDHHMM/Definitive_Layers/Terrain_Traps_energy_proxy.tif`
+- `outputs/results_DDHHMM/Definitive_Layers/Terrain_Traps_legend.csv`
+- `outputs/results_DDHHMM/Definitive_Layers/Terrain_Traps_stats.csv`
 - `outputs/results_DDHHMM/Definitive_Layers/BasinX/Star_propagating_Ending_Zones/Ava_Y.tif`
 - `outputs/results_DDHHMM/Definitive_Layers/BasinX/Star_propagating_Ending_Zones/index.csv`
 - `outputs/results_DDHHMM/Definitive_Layers/SlopeandForest_Classification.tif`
