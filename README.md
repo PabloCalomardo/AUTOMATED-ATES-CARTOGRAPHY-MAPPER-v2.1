@@ -33,7 +33,7 @@ El pipeline principal ([main.py](main.py)) executa 12 passos:
 
 7. Postprocess Flow-Py a GeoJSON unic
    - Exporta poligons d'allaus des de `source_ids_bitmask.tif`.
-   - Sortida: `outputs/results_DDHHMM/Definitive_Layers/avalanche_shapes.geojson`.
+   - Sortida: `outputs/results_DDHHMM/Definitive_Layers/0_Avalanche_Shapes.geojson`.
 
 8. Overhead exposure (nou modul)
    - Per cada `res_*`, combina `cell_counts.tif` i `z_delta.tif`.
@@ -41,8 +41,10 @@ El pipeline principal ([main.py](main.py)) executa 12 passos:
    - Implementat a [PostProcess_FlowPY/overhead_exposure.py](PostProcess_FlowPY/overhead_exposure.py).
 
 9. Classificacio ATES per pendent + bosc (nou modul)
+   - Primer calcula la classificacio nomes per pendent (sense efecte del bosc).
+   - Sortida previa: `outputs/results_DDHHMM/Definitive_Layers/1_Slope_Classification_NoForest.tif`.
    - Calcula classes ATES finals des de DEM + PCC forestal.
-   - Sortida: `outputs/results_DDHHMM/Definitive_Layers/SlopeandForest_Classification.tif`.
+   - Sortida: `outputs/results_DDHHMM/Definitive_Layers/1_SlopeandForest_Classification.tif`.
    - Implementat a [PostProcess_FlowPY/SlopeandForest_Classification.py](PostProcess_FlowPY/SlopeandForest_Classification.py).
 
 10. Landforms per curvatura a multiples escales (nou modul)
@@ -50,9 +52,9 @@ El pipeline principal ([main.py](main.py)) executa 12 passos:
    - Genera 3 capes amb diferents veinatges: 3x3, 6x6 i 12x12.
    - Per cada capa també genera un fitxer QML amb la simbologia de classes 1..9.
    - Sortides a `outputs/results_DDHHMM/Definitive_Layers/`:
-     - `Landforms_curvature_3x3.tif`
-     - `Landforms_curvature_6x6.tif`
-     - `Landforms_curvature_12x12.tif`
+   - `2_Landforms_curvature_3x3.tif`
+   - `2_Landforms_curvature_6x6.tif`
+   - `2_Landforms_curvature_12x12.tif`
    - Implementat a [PostProcess_FlowPY/landforms_multiscale.py](PostProcess_FlowPY/landforms_multiscale.py).
 
 11. Terrain traps (nou modul)
@@ -65,9 +67,9 @@ El pipeline principal ([main.py](main.py)) executa 12 passos:
           - `Road cuts / Benches`
           - `Lakes / Creeks`
       - Genera un raster bitmask i capes derivades de trauma/enterrament a:
-         - `outputs/results_DDHHMM/Definitive_Layers/Terrain_Traps_bitmask.tif`
-         - `outputs/results_DDHHMM/Definitive_Layers/Terrain_Traps_trauma_amplifiers.tif`
-         - `outputs/results_DDHHMM/Definitive_Layers/Terrain_Traps_burial_amplifiers.tif`
+         - `outputs/results_DDHHMM/Definitive_Layers/3_Terrain_Traps_bitmask.tif`
+         - `outputs/results_DDHHMM/Definitive_Layers/3_Terrain_Traps_trauma_amplifiers.tif`
+         - `outputs/results_DDHHMM/Definitive_Layers/3_Terrain_Traps_burial_amplifiers.tif`
       - Implementat a [PostProcess_FlowPY/terrain_traps.py](PostProcess_FlowPY/terrain_traps.py).
 
 12. Zones d'inici, propagacio i frenada per allau (nou modul)
@@ -324,24 +326,25 @@ python PostProcess_FlowPY/start_propagating_ending_zones.py --help
 - `outputs/results_DDHHMM/Watershed_Subdivisions/basins.tif`
 - `outputs/results_DDHHMM/Watershed_Subdivisions/pra_basin_*.tif`
 - `outputs/results_DDHHMM/Flow-Py/pra_basin_*/res_YYYYMMDD_HHMMSS/*`
-- `outputs/results_DDHHMM/Definitive_Layers/avalanche_shapes.geojson`
+- `outputs/results_DDHHMM/Definitive_Layers/0_Avalanche_Shapes.geojson`
+- `outputs/results_DDHHMM/Definitive_Layers/1_Slope_Classification_NoForest.tif`
+- `outputs/results_DDHHMM/Definitive_Layers/1_SlopeandForest_Classification.tif`
 - `outputs/results_DDHHMM/Definitive_Layers/BasinX/Exposure_zdelta_cellcount.tif`
-- `outputs/results_DDHHMM/Definitive_Layers/Landforms_curvature_3x3.tif`
-- `outputs/results_DDHHMM/Definitive_Layers/Landforms_curvature_3x3.qml`
-- `outputs/results_DDHHMM/Definitive_Layers/Landforms_curvature_6x6.tif`
-- `outputs/results_DDHHMM/Definitive_Layers/Landforms_curvature_6x6.qml`
-- `outputs/results_DDHHMM/Definitive_Layers/Landforms_curvature_12x12.tif`
-- `outputs/results_DDHHMM/Definitive_Layers/Landforms_curvature_12x12.qml`
-- `outputs/results_DDHHMM/Definitive_Layers/Terrain_Traps_bitmask.tif`
-- `outputs/results_DDHHMM/Definitive_Layers/Terrain_Traps_bitmask.qml`
-- `outputs/results_DDHHMM/Definitive_Layers/Terrain_Traps_trauma_amplifiers.tif`
-- `outputs/results_DDHHMM/Definitive_Layers/Terrain_Traps_burial_amplifiers.tif`
-- `outputs/results_DDHHMM/Definitive_Layers/Terrain_Traps_energy_proxy.tif`
-- `outputs/results_DDHHMM/Definitive_Layers/Terrain_Traps_legend.csv`
-- `outputs/results_DDHHMM/Definitive_Layers/Terrain_Traps_stats.csv`
+- `outputs/results_DDHHMM/Definitive_Layers/2_Landforms_curvature_3x3.tif`
+- `outputs/results_DDHHMM/Definitive_Layers/2_Landforms_curvature_3x3.qml`
+- `outputs/results_DDHHMM/Definitive_Layers/2_Landforms_curvature_6x6.tif`
+- `outputs/results_DDHHMM/Definitive_Layers/2_Landforms_curvature_6x6.qml`
+- `outputs/results_DDHHMM/Definitive_Layers/2_Landforms_curvature_12x12.tif`
+- `outputs/results_DDHHMM/Definitive_Layers/2_Landforms_curvature_12x12.qml`
+- `outputs/results_DDHHMM/Definitive_Layers/3_Terrain_Traps_bitmask.tif`
+- `outputs/results_DDHHMM/Definitive_Layers/3_Terrain_Traps_bitmask.qml`
+- `outputs/results_DDHHMM/Definitive_Layers/3_Terrain_Traps_trauma_amplifiers.tif`
+- `outputs/results_DDHHMM/Definitive_Layers/3_Terrain_Traps_burial_amplifiers.tif`
+- `outputs/results_DDHHMM/Definitive_Layers/3_Terrain_Traps_energy_proxy.tif`
+- `outputs/results_DDHHMM/Definitive_Layers/3_Terrain_Traps_legend.csv`
+- `outputs/results_DDHHMM/Definitive_Layers/3_Terrain_Traps_stats.csv`
 - `outputs/results_DDHHMM/Definitive_Layers/BasinX/Star_propagating_Ending_Zones/Ava_Y.tif`
 - `outputs/results_DDHHMM/Definitive_Layers/BasinX/Star_propagating_Ending_Zones/index.csv`
-- `outputs/results_DDHHMM/Definitive_Layers/SlopeandForest_Classification.tif`
 
 ## Notes
 

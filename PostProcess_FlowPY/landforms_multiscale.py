@@ -315,7 +315,7 @@ def run_landforms_multiscale(
             threshold=curvature_threshold,
         )
 
-        out_path = out_root / f"Landforms_curvature_{window}x{window}.tif"
+        out_path = out_root / f"2_Landforms_curvature_{window}x{window}.tif"
         raster_path = _write_landform_raster(path=out_path, data=landforms, profile_ref=dem_profile)
         _write_landform_qml_for_raster(raster_path)
         written.append(raster_path)

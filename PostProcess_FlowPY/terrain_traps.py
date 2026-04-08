@@ -274,6 +274,9 @@ def detect_terrain_traps(
     landform_path = _select_landform_path(
         definitive_layers_dir=definitive,
         preferred=(
+            "2_Landforms_curvature_3x3.tif",
+            "2_Landforms_curvature_6x6.tif",
+            "2_Landforms_curvature_12x12.tif",
             "Landforms_curvature_3x3.tif",
             "Landforms_curvature_6x6.tif",
             "Landforms_curvature_12x12.tif",
@@ -373,10 +376,10 @@ def detect_terrain_traps(
     profile_uint8 = dem_profile.copy()
     profile_uint8.update(dtype="uint8", count=1, nodata=0, compress="deflate")
 
-    out_bitmask = out_root / "Terrain_Traps_bitmask.tif"
-    out_trauma = out_root / "Terrain_Traps_trauma_amplifiers.tif"
-    out_burial = out_root / "Terrain_Traps_burial_amplifiers.tif"
-    out_energy = out_root / "Terrain_Traps_energy_proxy.tif"
+    out_bitmask = out_root / "3_Terrain_Traps_bitmask.tif"
+    out_trauma = out_root / "3_Terrain_Traps_trauma_amplifiers.tif"
+    out_burial = out_root / "3_Terrain_Traps_burial_amplifiers.tif"
+    out_energy = out_root / "3_Terrain_Traps_energy_proxy.tif"
 
     with rasterio.open(out_bitmask, "w", **profile_uint8) as dst:
         dst.write(bitmask, 1)
@@ -392,9 +395,9 @@ def detect_terrain_traps(
     with rasterio.open(out_energy, "w", **profile_float) as dst:
         dst.write(energy_out, 1)
 
-    qml_path = _write_bitmask_qml(out_root / "Terrain_Traps_bitmask.qml")
+    qml_path = _write_bitmask_qml(out_root / "3_Terrain_Traps_bitmask.qml")
 
-    legend_csv = out_root / "Terrain_Traps_legend.csv"
+    legend_csv = out_root / "3_Terrain_Traps_legend.csv"
     with legend_csv.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["bit_value", "trap_type", "group"])
@@ -404,7 +407,7 @@ def detect_terrain_traps(
         writer.writerow([8, "RoadCuts_Benches", "Burial"])
         writer.writerow([16, "Lakes_Creeks", "Burial + drowning hazard"])
 
-    stats_csv = out_root / "Terrain_Traps_stats.csv"
+    stats_csv = out_root / "3_Terrain_Traps_stats.csv"
     with stats_csv.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["trap_type", "pixels"])

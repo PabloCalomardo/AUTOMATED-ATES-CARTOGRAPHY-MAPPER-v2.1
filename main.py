@@ -33,7 +33,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from PostProcess_FlowPY.overhead_exposure import compute_overhead_exposure_from_files
 from PREPROCESSING.preprocess import align_forest_to_dem, fill_dem_simple, normalize_forest_for_flowpy
-from PostProcess_FlowPY.SlopeandForest_Classification import run_slope_and_forest_classification
+from PostProcess_FlowPY.SlopeandForest_Classification import run_slope_and_forest_classification, run_slope_only_classification
 from PostProcess_FlowPY.landforms_multiscale import run_landforms_multiscale
 from PostProcess_FlowPY.terrain_traps import detect_terrain_traps
 from PostProcess_FlowPY.start_propagating_ending_zones import run_for_all_basins as run_start_propagating_ending_zones
@@ -294,7 +294,7 @@ def step_07_postprocess_flowpy(
 	if not script.exists():
 		raise FileNotFoundError(f"PostProcess script not found: {script}")
 
-	out_geojson = out_dir / "avalanche_shapes.geojson"
+	out_geojson = out_dir / "0_Avalanche_Shapes.geojson"
 	cmd = [
 		sys.executable,
 		str(script),
@@ -316,11 +316,18 @@ def step_09_slope_and_forest_classification(
 	forest_window: int,
 	slope_sigma: float,
 	forest_adjustment: str,
-) -> Path:
+	) -> List[Path]:
 	"""Compute ATES classes from slope and forest density (0..4: null-simple-challenging-complex-extreme)."""
 	_ensure_dir(out_dir)
-	out_ates = out_dir / "SlopeandForest_Classification.tif"
-	return run_slope_and_forest_classification(
+	out_ates_slope_only = out_dir / "1_Slope_Classification_NoForest.tif"
+	out_ates = out_dir / "1_SlopeandForest_Classification.tif"
+	run_slope_only_classification(
+		dem_path=dem_path,
+		pcc_path=forest_pcc_path,
+		out_path=out_ates_slope_only,
+		slope_sigma=slope_sigma,
+	)
+	run_slope_and_forest_classification(
 		dem_path=dem_path,
 		pcc_path=forest_pcc_path,
 		out_path=out_ates,
@@ -328,6 +335,7 @@ def step_09_slope_and_forest_classification(
 		slope_sigma=slope_sigma,
 		forest_adjustment=forest_adjustment,
 	)
+	return [out_ates_slope_only, out_ates]
 
 
 def step_10_landforms_multiscale(
@@ -974,7 +982,8 @@ def main() -> None:
 		slope_sigma=args.ates_slope_sigma,
 		forest_adjustment=args.ates_forest_adjustment,
 	)
-	print(f"        slope_forest_classification: {ates_path.name}")
+	for ates_output in ates_path:
+		print(f"        ates: {ates_output.name}")
 	if until_n == 9:
 		print("Stopped at step 9 (--until-n).")
 		print(f"Outputs base dir: {outputs_dir}")
