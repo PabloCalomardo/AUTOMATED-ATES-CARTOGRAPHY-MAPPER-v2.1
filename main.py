@@ -15,6 +15,7 @@ Execution order (current MVP):
 11) Compute terrain traps from DEM + forest + landforms + Flow-Py z_delta
 12) Compute start/propagating/ending zones per avalanche and basin from flux
 13) Compute continuous runout zone characteristics (0..1) from Flow-Py outputs
+14) Compute weighted ATES layers (per-basin + merged) with ponderador
 
 Each step writes its own folder under `outputs/` so results can be reviewed
 individually.
@@ -441,6 +442,171 @@ def step_13_runout_zone_characteristics(
 	)
 
 
+def _list_pra_basins(watershed_out_dir: Path) -> List[tuple[int, Path]]:
+	pattern = re.compile(r"^pra_basin_(\d+)\.tif$", re.IGNORECASE)
+	basins: List[tuple[int, Path]] = []
+	for tif in watershed_out_dir.glob("pra_basin_*.tif"):
+		match = pattern.match(tif.name)
+		if match:
+			basins.append((int(match.group(1)), tif))
+	basins.sort(key=lambda x: x[0])
+	return basins
+
+
+def _select_ponderador_exposure_layer(
+	flowpy_res_dir: Path,
+	basin_dir: Path,
+	exposure_mode: str,
+) -> Path:
+	if exposure_mode == "zdelta_cellcount":
+		exposure_path = basin_dir / "Exposure_zdelta_cellcount.tif"
+		if not exposure_path.exists():
+			raise FileNotFoundError(
+				"Missing ponderador exposure layer for mode=zdelta_cellcount: "
+				f"{exposure_path}. Run step 6 first to generate this layer."
+			)
+		return exposure_path
+
+	if exposure_mode == "zdelta":
+		candidate = basin_dir / "Exposure_zdelta.tif"
+		if candidate.exists():
+			return candidate
+		fallback = flowpy_res_dir / "z_delta.tif"
+		if fallback.exists():
+			return fallback
+		raise FileNotFoundError(
+			f"Missing ponderador exposure layer for mode=zdelta. Checked: {candidate} and {fallback}"
+		)
+
+	if exposure_mode == "cellcount":
+		candidate = basin_dir / "Exposure_cellcount.tif"
+		if candidate.exists():
+			return candidate
+		fallback = flowpy_res_dir / "cell_counts.tif"
+		if fallback.exists():
+			return fallback
+		raise FileNotFoundError(
+			f"Missing ponderador exposure layer for mode=cellcount. Checked: {candidate} and {fallback}"
+		)
+
+	raise ValueError(f"Unsupported ponderador exposure mode: {exposure_mode}")
+
+
+def _merge_rasters_max(input_paths: List[Path], output_path: Path) -> Path:
+	if not input_paths:
+		raise RuntimeError("No input rasters provided for ponderador merge")
+
+	try:
+		import numpy as np
+		import rasterio
+	except Exception as e:  # pragma: no cover
+		raise RuntimeError("Missing dependencies for ponderador merge (numpy/rasterio)") from e
+
+	nodata_out = -9999
+	first = input_paths[0]
+	with rasterio.open(first) as src0:
+		merged = src0.read(1)
+		profile = src0.profile.copy()
+		base_shape = (src0.height, src0.width)
+		base_transform = src0.transform
+		base_crs = src0.crs
+		nodata0 = src0.nodata
+
+	def _valid(arr, nodata):
+		if nodata is None:
+			return np.isfinite(arr)
+		return arr != nodata
+
+	merged_valid = _valid(merged, nodata0)
+	if nodata0 is None:
+		merged = merged.astype("int16", copy=False)
+		merged[~merged_valid] = nodata_out
+
+	for path in input_paths[1:]:
+		with rasterio.open(path) as src:
+			if (src.height, src.width) != base_shape or src.transform != base_transform or src.crs != base_crs:
+				raise RuntimeError(
+					f"Ponderador merge requires identical grid/CRS. Incompatible raster: {path}"
+				)
+			arr = src.read(1)
+			nodata = src.nodata
+
+		valid = _valid(arr, nodata)
+		only_new = valid & (~merged_valid)
+		both = valid & merged_valid
+		merged[only_new] = arr[only_new]
+		merged[both] = np.maximum(merged[both], arr[both])
+		merged_valid = merged_valid | valid
+
+	profile.update(dtype="int16", nodata=nodata_out, compress="deflate")
+	output_path.parent.mkdir(parents=True, exist_ok=True)
+	with rasterio.open(output_path, "w", **profile) as dst:
+		dst.write(merged.astype("int16"), 1)
+
+	return output_path
+
+
+def step_14_ponderador_autoates(
+	dem_path: Path,
+	forest_path: Path,
+	watershed_out_dir: Path,
+	flowpy_out_dir: Path,
+	definitive_layers_dir: Path,
+	forest_type: str,
+	exposure_mode: str,
+	output_name: str,
+) -> tuple[List[Path], Path]:
+	"""Run ponderador per basin and merge outputs into one global ATES raster."""
+	from Ponderador.AutoATES_classifier import run_autoates_weighted
+
+	_ensure_dir(definitive_layers_dir)
+	basins = _list_pra_basins(watershed_out_dir)
+	if not basins:
+		raise RuntimeError(f"No pra_basin_*.tif found for ponderador in: {watershed_out_dir}")
+
+	basin_outputs: List[Path] = []
+	for basin_id, pra_basin_path in basins:
+		run_dir = flowpy_out_dir / f"pra_basin_{basin_id}"
+		if not run_dir.exists():
+			raise FileNotFoundError(f"Missing Flow-Py run folder for basin {basin_id}: {run_dir}")
+
+		flowpy_res_dir = _latest_flowpy_result_dir(run_dir)
+		if flowpy_res_dir is None:
+			raise RuntimeError(f"No Flow-Py res_* found for basin {basin_id} in: {run_dir}")
+
+		fp_path = flowpy_res_dir / "FP_travel_angle.tif"
+		if not fp_path.exists():
+			raise FileNotFoundError(
+				f"Missing FP layer for ponderador in basin {basin_id}: {fp_path}"
+			)
+
+		basin_dir = definitive_layers_dir / f"Basin{basin_id}"
+		_ensure_dir(basin_dir)
+		exposure_path = _select_ponderador_exposure_layer(
+			flowpy_res_dir=flowpy_res_dir,
+			basin_dir=basin_dir,
+			exposure_mode=exposure_mode,
+		)
+
+		basin_output = run_autoates_weighted(
+			dem_path=dem_path,
+			canopy_path=forest_path,
+			cell_count_path=exposure_path,
+			fp_path=fp_path,
+			sz_path=pra_basin_path,
+			out_dir=basin_dir,
+			forest_type=forest_type,
+			output_name=output_name,
+		)
+		basin_outputs.append(basin_output)
+
+	global_output = _merge_rasters_max(
+		input_paths=basin_outputs,
+		output_path=definitive_layers_dir / output_name,
+	)
+	return basin_outputs, global_output
+
+
 def _load_flowpy_entrypoint(flowpy_dir: Path) -> Callable[[List[str], Dict[str, str]], None]:
 	"""Load Flow-Py terminal entrypoint without executing its __main__ block."""
 	flowpy_main = (flowpy_dir / "main.py").resolve()
@@ -656,7 +822,7 @@ def step_06_flowpy_per_basin(
 
 
 def parse_args() -> argparse.Namespace:
-	parser = argparse.ArgumentParser(description="Run APP_ATES_PABLO pipeline (steps 1-13).")
+	parser = argparse.ArgumentParser(description="Run APP_ATES_PABLO pipeline (steps 1-14).")
 	parser.add_argument("--dem", default="inputs/DEM_BOW_SUMMIT.tif", help="Path to input DEM (GeoTIFF)")
 	parser.add_argument("--forest", default="inputs/FOREST_BOW_SUMMIT.tif", help="Path to forest density raster (GeoTIFF)")
 	parser.add_argument(
@@ -686,9 +852,9 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument(
 		"--until-n",
 		type=int,
-		choices=range(1, 14),
+		choices=range(1, 15),
 		default=None,
-		help="Run pipeline from step 1 up to step N (N in 1..13)",
+		help="Run pipeline from step 1 up to step N (N in 1..14)",
 	)
 
 	# PRA parameters (keep defaults aligned with script docstring)
@@ -859,6 +1025,29 @@ def parse_args() -> argparse.Namespace:
 		type=float,
 		default=0.03,
 		help="Minimum combined evidence score to keep runout cells",
+	)
+
+	# --- Ponderador weighted ATES (step 14)
+	parser.add_argument(
+		"--ponderador-exposure-mode",
+		choices=["zdelta_cellcount", "zdelta", "cellcount"],
+		default="zdelta_cellcount",
+		help=(
+			"Exposure layer used by ponderador: zdelta_cellcount (BasinX/Exposure_zdelta_cellcount.tif), "
+			"zdelta (BasinX/Exposure_zdelta.tif or Flow-Py z_delta.tif), "
+			"or cellcount (BasinX/Exposure_cellcount.tif or Flow-Py cell_counts.tif)."
+		),
+	)
+	parser.add_argument(
+		"--ponderador-forest-type",
+		choices=["stems", "bav", "pcc", "sen2cc"],
+		default=None,
+		help="Forest type used internally by ponderador thresholds (default: same as --forest-type)",
+	)
+	parser.add_argument(
+		"--ponderador-output-name",
+		default="Ponderador_ATES.tif",
+		help="Output filename for ponderador ATES rasters (per-basin and global)",
 	)
 
 	args = parser.parse_args()
@@ -1158,6 +1347,35 @@ def main() -> None:
 		print(f"        runout: {runout_path.name}")
 	if until_n == 13:
 		print("Stopped at step 13 (--until-n).")
+		print(f"Outputs base dir: {outputs_dir}")
+		return
+
+	print("[14] Computing weighted ATES with ponderador (per basin + merged global)...")
+	forest_for_ponderador = forest_aligned if forest_aligned is not None else forest_path
+	if forest_for_ponderador is None:
+		raise RuntimeError("Step 14 requires a forest raster (provide --forest).")
+	ponderador_forest_type = args.ponderador_forest_type or args.forest_type
+	if ponderador_forest_type == "no_forest":
+		raise RuntimeError(
+			"Step 14 ponderador requires a forest-backed forest_type (stems/bav/pcc/sen2cc), "
+			"but --forest-type=no_forest was provided."
+		)
+
+	ponderador_basin_outputs, ponderador_global_output = step_14_ponderador_autoates(
+		dem_path=dem_filled,
+		forest_path=forest_for_ponderador,
+		watershed_out_dir=out_05,
+		flowpy_out_dir=out_06,
+		definitive_layers_dir=out_08,
+		forest_type=ponderador_forest_type,
+		exposure_mode=args.ponderador_exposure_mode,
+		output_name=args.ponderador_output_name,
+	)
+	print(f"        ponderador_global: {ponderador_global_output.name}")
+	for basin_output in ponderador_basin_outputs:
+		print(f"        ponderador_basin: {basin_output}")
+	if until_n == 14:
+		print("Stopped at step 14 (--until-n).")
 		print(f"Outputs base dir: {outputs_dir}")
 		return
 

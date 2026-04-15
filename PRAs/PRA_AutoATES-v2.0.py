@@ -249,7 +249,8 @@ def PRA(forest_type, DEM, FOREST, radius, prob, winddir, windtol, pra_thd, sf, o
 
     f.write("Cauchy slope function: a={}, b={}, c={}\n".format(a, b, c))
 
-    slopeC = 1/(1+((slope_deg-c)/a)**(2*b))
+    with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+        slopeC = 1/(1+((slope_deg-c)/a)**(2*b))
 
     # --- Define bell curve parameters for windshelter
     a = 3
@@ -258,9 +259,10 @@ def PRA(forest_type, DEM, FOREST, radius, prob, winddir, windtol, pra_thd, sf, o
     f.write("Cauchy windshelter function: a={}, b={}, c={}\n".format(a, b, c))
 
     with rasterio.open(out_dir / "windshelter.tif") as src:
-        windshelter = src.read()
+        windshelter = src.read().astype(np.float32, copy=False)
 
-    windshelterC = 1/(1+((windshelter-c)/a)**(2*b))
+    with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+        windshelterC = 1/(1+((windshelter-c)/a)**(2*b))
 
     # --- Define bell curve parameters for forest stem density
     if forest_type in ['stems']:
@@ -294,14 +296,15 @@ def PRA(forest_type, DEM, FOREST, radius, prob, winddir, windtol, pra_thd, sf, o
 
     if forest_type in ['pcc', 'stems']:
         with rasterio.open(FOREST) as src:
-            forest = src.read()
+            forest = src.read().astype(np.float32, copy=False)
 
     if forest_type in ['no_forest']:
         with rasterio.open(DEM) as src:
-            forest = src.read()
+            forest = src.read().astype(np.float32, copy=False)
             forest = np.where(forest > -100, 0, forest)
 
-    forestC = 1/(1+((forest-c)/a)**(2*b))
+    with np.errstate(over='ignore', invalid='ignore', divide='ignore'):
+        forestC = 1/(1+((forest-c)/a)**(2*b))
     # --- Ares with no forest and assigned -9999 will get a really small value which suggest dense forest. This function fixes this, but might have to be adjusted depending on the input dataset.
     forestC[np.where(forestC <= 0.00001)] = 1
 
