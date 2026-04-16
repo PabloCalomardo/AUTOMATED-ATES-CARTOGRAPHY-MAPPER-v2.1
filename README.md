@@ -4,7 +4,7 @@ Pipeline en Python per generar Potential Release Areas (PRA) i productes derivat
 
 ## Que fa (estat actual)
 
-El pipeline principal ([main.py](main.py)) executa 12 passos:
+El pipeline principal ([main.py](main.py)) executa 14 passos:
 
 1. Validacio d'inputs
    - Comprova que existeixen DEM i forest.
@@ -36,7 +36,12 @@ El pipeline principal ([main.py](main.py)) executa 12 passos:
    - Sortida: `outputs/results_DDHHMM/Definitive_Layers/0_Avalanche_Shapes.geojson`.
 
 8. Overhead exposure (nou modul)
-   - Per cada `res_*`, combina `cell_counts.tif` i `z_delta.tif`.
+   - Per cada `res_*`, combina `cell_counts.tif` i `z_delta.tif` amb ponderacio configurable.
+   - Formula: `exposure = w_cellcount * cellcount_norm + (1 - w_cellcount) * zdelta_norm`.
+   - Parametre: `--overhead-cellcount-weight` (rang `[0,1]`).
+     - `1.0`: nomes Cellcount
+     - `0.0`: nomes Zdelta
+     - `0.1`: 10% Cellcount + 90% Zdelta
    - Escriu a `outputs/results_DDHHMM/Definitive_Layers/BasinX/Exposure_zdelta_cellcount.tif`.
    - Implementat a [PostProcess_FlowPY/overhead_exposure.py](PostProcess_FlowPY/overhead_exposure.py).
 
@@ -102,9 +107,16 @@ El pipeline principal ([main.py](main.py)) executa 12 passos:
       - `outputs/results_DDHHMM/Definitive_Layers/BasinX/Star_propagating_Ending_Zones/index.csv`
     - Implementat a [PostProcess_FlowPY/start_propagating_ending_zones.py](PostProcess_FlowPY/start_propagating_ending_zones.py).
 
+13. Runout zone characteristics (nou modul)
+   - Calcula una metrica continua 0..1 de dificultat de runout.
+
+14. Ponderador weighted ATES (nou modul)
+   - Executa el ponderador per basin i fusiona un raster global.
+   - Usa sempre `Exposure_zdelta_cellcount.tif` com a capa d'exposicio d'entrada.
+
 ## Moduls del projecte
 
-- [main.py](main.py): orquestrador principal (passos 1..12).
+- [main.py](main.py): orquestrador principal (passos 1..14).
 - [PREPROCESSING/preprocess.py](PREPROCESSING/preprocess.py): preprocessat DEM/forest.
 - [PRAs/PRA_AutoATES-v2.0.py](PRAs/PRA_AutoATES-v2.0.py): calcul PRA.
 - [PRAs/PRA_Divisor.py](PRAs/PRA_Divisor.py): divisio PRA per drenatge.
@@ -157,7 +169,7 @@ Des de l'arrel del projecte:
 python main.py
 ```
 
-Aixo executa el pipeline complet (1..12).
+Aixo executa el pipeline complet (1..14).
 
 Per defecte, cada execucio crea una carpeta nova a `outputs/results_DDHHMM` per evitar sobreescriptures.
 
@@ -188,7 +200,7 @@ Nota: `--only-step6` i `--until-n` son incompatibles.
 python main.py --until-n N
 ```
 
-On `N` pot ser de `1` a `12`.
+On `N` pot ser de `1` a `14`.
 
 Exemples:
 
@@ -213,6 +225,12 @@ python main.py --until-n 11
 
 # passos 1..12
 python main.py --until-n 12
+
+# passos 1..13
+python main.py --until-n 13
+
+# passos 1..14
+python main.py --until-n 14
 ```
 
 ### 4) Execucio amb parametres personalitzats
@@ -225,13 +243,12 @@ python main.py \
   --divisor-stream-threshold 300 \
   --flowpy-alpha 22 \
    --flowpy-max-z 8000 \
-   --overhead-exposure-mode zdelta_cellcount
+   --overhead-cellcount-weight 0.5
 ```
 
-Per triar com es calcula l'overhead exposure (pas 8), afegeix aquest parametre:
-- `--overhead-exposure-mode zdelta_cellcount` (combinacio de Cellcount + Zdelta, mode actual)
-- `--overhead-exposure-mode cellcount` (nomes Cellcount)
-- `--overhead-exposure-mode zdelta` (nomes Zdelta)
+Per controlar com es calcula l'overhead exposure (pas 8), usa:
+- `--overhead-cellcount-weight <0..1>`
+- El pes de `z_delta` es calcula automaticament com `1 - overhead_cellcount_weight`.
 
 ### Tots els parametres personalitzables (`python main.py --help`)
 
@@ -282,7 +299,7 @@ Nota:
 - `--flowpy-exponent` (default: `8`)
 - `--flowpy-flux` (default: `0.003`)
 - `--flowpy-max-z` (default: `8000`)
-- `--overhead-exposure-mode` (default: `zdelta_cellcount`; opcions: `zdelta_cellcount`, `zdelta`, `cellcount`)
+- `--overhead-cellcount-weight` (default: `0.5`; rang: `0..1`)
 - `--flowpy-infra` (default: `None`; raster d'infraestructura opcional)
 
 #### Pas 9 - Classificacio slope + forest
@@ -326,8 +343,7 @@ Nota:
 
 #### Pas 14 - Ponderador weighted ATES
 
-- `--ponderador-exposure-mode` (default: `auto`; opcions: `auto`, `zdelta_cellcount`, `zdelta`, `cellcount`)
-- Amb `auto`, el pas 14 usa automaticament el valor seleccionat a `--overhead-exposure-mode`.
+- El pas 14 usa sempre `Definitive_Layers/BasinX/Exposure_zdelta_cellcount.tif`.
 - `--ponderador-forest-type` (default: `None`; opcions: `stems`, `bav`, `pcc`, `sen2cc`; si no es passa hereta `--forest-type`)
 - `--ponderador-output-name` (default: `Ponderador_ATES.tif`)
 
@@ -343,11 +359,11 @@ python main.py \
    --divisor-stream-threshold 300 \
    --flowpy-alpha 22 \
    --flowpy-max-z 8000 \
+   --overhead-cellcount-weight 0.1 \
    --ates-forest-adjustment paper_pra \
    --terrain-gully-spi-percentile 90 \
    --zones-start-threshold 0.98 \
-   --zones-ending-threshold 0.08 \
-   --ponderador-exposure-mode zdelta_cellcount
+   --zones-ending-threshold 0.08
 ```
 
 ## Execucio de moduls per separat (opcional)
@@ -370,7 +386,7 @@ Postprocess Flow-Py (GeoJSON d'allaus):
 python PostProcess_FlowPY/post_FlowPy.py --help
 ```
 
-Overhead exposure (z_delta + cell_count):
+Overhead exposure ponderada (z_delta + cell_count):
 
 ```bash
 python PostProcess_FlowPY/overhead_exposure.py --help
@@ -444,6 +460,8 @@ python PostProcess_FlowPY/start_propagating_ending_zones.py --help
 - `outputs/results_DDHHMM/Definitive_Layers/3_Terrain_Traps_stats.csv`
 - `outputs/results_DDHHMM/Definitive_Layers/BasinX/Star_propagating_Ending_Zones/Ava_Y.tif`
 - `outputs/results_DDHHMM/Definitive_Layers/BasinX/Star_propagating_Ending_Zones/index.csv`
+- `outputs/results_DDHHMM/Definitive_Layers/BasinX/Ponderador_ATES.tif`
+- `outputs/results_DDHHMM/Definitive_Layers/Ponderador_ATES.tif`
 
 ## Notes
 

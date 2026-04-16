@@ -9,7 +9,7 @@ Execution order (current MVP):
 5) Watershed subdivision + PRA split (GRASS)
 6) Run Flow-Py once per `pra_basin_*.tif`
 7) Post-process Flow-Py outputs to one GeoJSON
-8) Compute `exposure_zdelta_cellcount.tif` for each new Flow-Py `res_*`
+8) Compute weighted `Exposure_zdelta_cellcount.tif` for each new Flow-Py `res_*`
 9) Compute slope+forest ATES classes from DEM slope + forest density
 10) Compute multiscale curvature-based landforms from DEM (5x5..20x20) + entropy
 11) Compute terrain traps from DEM + forest + landforms + Flow-Py z_delta
@@ -454,42 +454,15 @@ def _list_pra_basins(watershed_out_dir: Path) -> List[tuple[int, Path]]:
 
 
 def _select_ponderador_exposure_layer(
-	flowpy_res_dir: Path,
 	basin_dir: Path,
-	exposure_mode: str,
 ) -> Path:
-	if exposure_mode == "zdelta_cellcount":
-		exposure_path = basin_dir / "Exposure_zdelta_cellcount.tif"
-		if not exposure_path.exists():
-			raise FileNotFoundError(
-				"Missing ponderador exposure layer for mode=zdelta_cellcount: "
-				f"{exposure_path}. Run step 6 first to generate this layer."
-			)
-		return exposure_path
-
-	if exposure_mode == "zdelta":
-		candidate = basin_dir / "Exposure_zdelta.tif"
-		if candidate.exists():
-			return candidate
-		fallback = flowpy_res_dir / "z_delta.tif"
-		if fallback.exists():
-			return fallback
+	exposure_path = basin_dir / "Exposure_zdelta_cellcount.tif"
+	if not exposure_path.exists():
 		raise FileNotFoundError(
-			f"Missing ponderador exposure layer for mode=zdelta. Checked: {candidate} and {fallback}"
+			"Missing ponderador exposure layer: "
+			f"{exposure_path}. Run step 6 first to generate this layer."
 		)
-
-	if exposure_mode == "cellcount":
-		candidate = basin_dir / "Exposure_cellcount.tif"
-		if candidate.exists():
-			return candidate
-		fallback = flowpy_res_dir / "cell_counts.tif"
-		if fallback.exists():
-			return fallback
-		raise FileNotFoundError(
-			f"Missing ponderador exposure layer for mode=cellcount. Checked: {candidate} and {fallback}"
-		)
-
-	raise ValueError(f"Unsupported ponderador exposure mode: {exposure_mode}")
+	return exposure_path
 
 
 def _merge_rasters_max(input_paths: List[Path], output_path: Path) -> Path:
@@ -553,7 +526,6 @@ def step_14_ponderador_autoates(
 	flowpy_out_dir: Path,
 	definitive_layers_dir: Path,
 	forest_type: str,
-	exposure_mode: str,
 	output_name: str,
 ) -> tuple[List[Path], Path]:
 	"""Run ponderador per basin and merge outputs into one global ATES raster."""
@@ -583,9 +555,7 @@ def step_14_ponderador_autoates(
 		basin_dir = definitive_layers_dir / f"Basin{basin_id}"
 		_ensure_dir(basin_dir)
 		exposure_path = _select_ponderador_exposure_layer(
-			flowpy_res_dir=flowpy_res_dir,
 			basin_dir=basin_dir,
-			exposure_mode=exposure_mode,
 		)
 
 		basin_output = run_autoates_weighted(
@@ -721,33 +691,25 @@ def _create_flowpy_zdelta_cellcount_exposure_layer(
 	flowpy_res_dir: Path,
 	definitive_layers_dir: Path,
 	basin_id: int,
-	exposure_mode: str,
+	cellcount_weight: float,
 ) -> Optional[Path]:
-	"""Create BasinX overhead exposure raster in Definitive_Layers for selected mode."""
+	"""Create BasinX weighted overhead exposure raster in Definitive_Layers."""
 	cell_counts_path = flowpy_res_dir / "cell_counts.tif"
 	z_delta_path = flowpy_res_dir / "z_delta.tif"
 	basin_dir = definitive_layers_dir / f"Basin{basin_id}"
 	_ensure_dir(basin_dir)
-	out_name_by_mode = {
-		"zdelta_cellcount": "Exposure_zdelta_cellcount.tif",
-		"zdelta": "Exposure_zdelta.tif",
-		"cellcount": "Exposure_cellcount.tif",
-	}
-	out_name = out_name_by_mode.get(exposure_mode)
-	if out_name is None:
-		raise ValueError(f"Unsupported overhead exposure mode: {exposure_mode}")
-	out_path = basin_dir / out_name
+	out_path = basin_dir / "Exposure_zdelta_cellcount.tif"
 
-	if exposure_mode in ("zdelta_cellcount", "cellcount") and not cell_counts_path.exists():
+	if not cell_counts_path.exists():
 		return None
-	if exposure_mode in ("zdelta_cellcount", "zdelta") and not z_delta_path.exists():
+	if not z_delta_path.exists():
 		return None
 
 	return compute_overhead_exposure_from_files(
-		cell_count_path=cell_counts_path if cell_counts_path.exists() else None,
-		z_delta_path=z_delta_path if z_delta_path.exists() else None,
+		cell_count_path=cell_counts_path,
+		z_delta_path=z_delta_path,
 		output_path=out_path,
-		mode=exposure_mode,
+		cellcount_weight=cellcount_weight,
 	)
 
 
@@ -763,7 +725,7 @@ def step_06_flowpy_per_basin(
 	max_z: float,
 	forest_path: Optional[Path],
 	infra_path: Optional[Path],
-	overhead_exposure_mode: str,
+	overhead_cellcount_weight: float,
 ) -> List[Path]:
 	"""Run Flow-Py once per pra_basin raster and store each run in its own folder."""
 	if not watershed_out_dir.exists():
@@ -826,7 +788,7 @@ def step_06_flowpy_per_basin(
 				flowpy_res_dir=flowpy_res_dir,
 				definitive_layers_dir=definitive_layers_dir,
 				basin_id=basin_id,
-				exposure_mode=overhead_exposure_mode,
+				cellcount_weight=overhead_cellcount_weight,
 			)
 			if overhead_exposure_path is not None:
 				print(f"        overhead_exposure: {overhead_exposure_path.name}")
@@ -910,10 +872,10 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--flowpy-flux", type=float, default=0.003)
 	parser.add_argument("--flowpy-max-z", type=float, default=8000) #default ESTANDARD 270
 	parser.add_argument(
-		"--overhead-exposure-mode",
-		choices=["zdelta_cellcount", "zdelta", "cellcount"],
-		default="zdelta_cellcount",
-		help="Mode for step 8 overhead exposure layer: combined, z_delta only, or cell_count only",
+		"--overhead-cellcount-weight",
+		type=float,
+		default=0.5,
+		help="Weight for normalized cell_count in step 8 [0..1]. z_delta weight is (1 - value).",
 	)
 	parser.add_argument(
 		"--flowpy-infra",
@@ -1049,17 +1011,6 @@ def parse_args() -> argparse.Namespace:
 
 	# --- Ponderador weighted ATES (step 14)
 	parser.add_argument(
-		"--ponderador-exposure-mode",
-		choices=["auto", "zdelta_cellcount", "zdelta", "cellcount"],
-		default="auto",
-		help=(
-			"Exposure layer used by ponderador: auto (uses --overhead-exposure-mode), "
-			"zdelta_cellcount (BasinX/Exposure_zdelta_cellcount.tif), "
-			"zdelta (BasinX/Exposure_zdelta.tif or Flow-Py z_delta.tif), "
-			"or cellcount (BasinX/Exposure_cellcount.tif or Flow-Py cell_counts.tif)."
-		),
-	)
-	parser.add_argument(
 		"--ponderador-forest-type",
 		choices=["stems", "bav", "pcc", "sen2cc"],
 		default=None,
@@ -1076,6 +1027,8 @@ def parse_args() -> argparse.Namespace:
 		parser.error("--only-step6 cannot be used together with --until-n")
 	if args.zones_start_threshold <= args.zones_ending_threshold:
 		parser.error("--zones-start-threshold must be greater than --zones-ending-threshold")
+	if args.overhead_cellcount_weight < 0.0 or args.overhead_cellcount_weight > 1.0:
+		parser.error("--overhead-cellcount-weight must be in [0, 1]")
 	return args
 
 
@@ -1143,7 +1096,7 @@ def main() -> None:
 			max_z=args.flowpy_max_z,
 			forest_path=flowpy_forest_for_step6,
 			infra_path=flowpy_infra,
-			overhead_exposure_mode=args.overhead_exposure_mode,
+			overhead_cellcount_weight=args.overhead_cellcount_weight,
 		)
 		print("Done (step 6 only).")
 		print(f"Outputs base dir: {outputs_dir}")
@@ -1253,7 +1206,7 @@ def main() -> None:
 		max_z=args.flowpy_max_z,
 		forest_path=flowpy_forest_for_run,
 		infra_path=flowpy_infra,
-		overhead_exposure_mode=args.overhead_exposure_mode,
+		overhead_cellcount_weight=args.overhead_cellcount_weight,
 	)
 	if until_n == 6:
 		print("Stopped at step 6 (--until-n).")
@@ -1272,7 +1225,11 @@ def main() -> None:
 		print(f"Outputs base dir: {outputs_dir}")
 		return
 
-	print(f"[8] Overhead exposure generated per new Flow-Py result (mode={args.overhead_exposure_mode}).")
+	print(
+		"[8] Overhead exposure generated per new Flow-Py result "
+		f"(cellcount_weight={args.overhead_cellcount_weight:.3f}, "
+		f"zdelta_weight={1.0 - args.overhead_cellcount_weight:.3f})."
+	)
 	if until_n == 8:
 		print("Stopped at step 8 (--until-n).")
 		print(f"Outputs base dir: {outputs_dir}")
@@ -1378,11 +1335,6 @@ def main() -> None:
 	if forest_for_ponderador is None:
 		raise RuntimeError("Step 14 requires a forest raster (provide --forest).")
 	ponderador_forest_type = args.ponderador_forest_type or args.forest_type
-	ponderador_exposure_mode = (
-		args.overhead_exposure_mode
-		if args.ponderador_exposure_mode == "auto"
-		else args.ponderador_exposure_mode
-	)
 	if ponderador_forest_type == "no_forest":
 		raise RuntimeError(
 			"Step 14 ponderador requires a forest-backed forest_type (stems/bav/pcc/sen2cc), "
@@ -1396,10 +1348,8 @@ def main() -> None:
 		flowpy_out_dir=out_06,
 		definitive_layers_dir=out_08,
 		forest_type=ponderador_forest_type,
-		exposure_mode=ponderador_exposure_mode,
 		output_name=args.ponderador_output_name,
 	)
-	print(f"        ponderador_exposure_mode: {ponderador_exposure_mode}")
 	print(f"        ponderador_global: {ponderador_global_output.name}")
 	for basin_output in ponderador_basin_outputs:
 		print(f"        ponderador_basin: {basin_output}")
