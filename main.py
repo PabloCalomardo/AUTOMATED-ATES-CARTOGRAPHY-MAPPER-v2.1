@@ -527,9 +527,18 @@ def step_14_ponderador_autoates(
 	definitive_layers_dir: Path,
 	forest_type: str,
 	output_name: str,
+	ponderador_mode: str = "hybrid",
 ) -> tuple[List[Path], Path]:
 	"""Run ponderador per basin and merge outputs into one global ATES raster."""
-	from Ponderador.AutoATES_classifier import run_autoates_weighted
+	ponderador_mode = str(ponderador_mode).lower()
+	if ponderador_mode == "hybrid":
+		from Ponderador.AutoATES_classifier import run_autoates_weighted
+	elif ponderador_mode == "original":
+		from Ponderador.AutoATES_classifier_ORIGINAL import run_autoates_weighted
+	else:
+		raise ValueError(
+			f"Unsupported ponderador_mode: {ponderador_mode}. Use 'hybrid' or 'original'."
+		)
 
 	_ensure_dir(definitive_layers_dir)
 	basins = _list_pra_basins(watershed_out_dir)
@@ -1025,6 +1034,12 @@ def parse_args() -> argparse.Namespace:
 		default="Ponderador_ATES.tif",
 		help="Output filename for ponderador ATES rasters (per-basin and global)",
 	)
+	parser.add_argument(
+		"--ponderador-mode",
+		choices=["hybrid", "original"],
+		default="hybrid",
+		help="Select ponderador implementation for step 14 (default: hybrid)",
+	)
 
 	args = parser.parse_args()
 	if args.only_step6 and args.until_n is not None:
@@ -1337,7 +1352,10 @@ def main() -> None:
 		print(f"Outputs base dir: {outputs_dir}")
 		return
 
-	print("[14] Computing weighted ATES with ponderador (per basin + merged global)...")
+	print(
+		f"[14] Computing weighted ATES with ponderador mode={args.ponderador_mode} "
+		"(per basin + merged global)..."
+	)
 	forest_for_ponderador = forest_aligned if forest_aligned is not None else forest_path
 	if forest_for_ponderador is None:
 		raise RuntimeError("Step 14 requires a forest raster (provide --forest).")
@@ -1356,6 +1374,7 @@ def main() -> None:
 		definitive_layers_dir=out_08,
 		forest_type=ponderador_forest_type,
 		output_name=args.ponderador_output_name,
+		ponderador_mode=args.ponderador_mode,
 	)
 	print(f"        ponderador_global: {ponderador_global_output.name}")
 	for basin_output in ponderador_basin_outputs:
