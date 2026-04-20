@@ -207,8 +207,8 @@ def normalize_forest_for_flowpy(
 ) -> Path:
 	"""Normalize forest raster for Flow-Py to a 0..1 range.
 
-	Expected input is PCC in percent (0..100). Values are clipped to [0, 100]
-	and scaled by 1/100. Nodata and DEM-outside footprint remain nodata.
+	Valid values are clipped to be non-negative and scaled by the maximum value
+	found in the layer (0..max). Nodata and DEM-outside footprint remain nodata.
 	"""
 
 	in_path = Path(in_forest).expanduser().resolve()
@@ -233,7 +233,12 @@ def normalize_forest_for_flowpy(
 			valid = arr != nodata
 
 	norm = np.zeros_like(arr_f, dtype="float32")
-	norm[valid] = np.clip(arr_f[valid], 0.0, 100.0) / 100.0
+	valid_nonneg = np.clip(arr_f[valid], 0.0, None)
+	max_valid = float(np.max(valid_nonneg)) if valid_nonneg.size else 0.0
+	if max_valid > 0.0:
+		norm[valid] = valid_nonneg / max_valid
+	else:
+		norm[valid] = 0.0
 
 	out_nodata = -9999.0
 	norm[~valid] = out_nodata

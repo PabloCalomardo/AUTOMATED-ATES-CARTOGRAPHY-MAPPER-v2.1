@@ -271,8 +271,8 @@ Nota:
 
 #### Pas 3 - PRA (AutoATES)
 
-- `--radius` (default: `6`)
-- `--prob` (default: `0.6`)
+- `--radius` (default: `2`)
+- `--prob` (default: `0.5`)
 - `--winddir` (default: `0`)
 - `--windtol` (default: `180`)
 - `--pra-thd` (default: `0.15`)

@@ -294,7 +294,7 @@ def PRA(forest_type, DEM, FOREST, radius, prob, winddir, windtol, pra_thd, sf, o
         if forest_type in ['no_forest']:
             f.write("No forest input given\n")
 
-    if forest_type in ['pcc', 'stems']:
+    if forest_type in ['pcc', 'stems', 'bav', 'sen2cc']:
         with rasterio.open(FOREST) as src:
             forest = src.read().astype(np.float32, copy=False)
 
@@ -335,7 +335,7 @@ def PRA(forest_type, DEM, FOREST, radius, prob, winddir, windtol, pra_thd, sf, o
     # --- Reclassify PRA to be used as input for FlowPy
     profile.update({'nodata': -9999})
     pra_thd = pra_thd * 100
-    PRA[np.where((0 <= PRA) & (PRA < pra_thd))] = 0
+    PRA[np.where((0 <= PRA) & (PRA <= pra_thd))] = 0
     PRA[np.where((pra_thd < PRA) & (PRA <= 100))] = 1
 
     with rasterio.open(out_dir / 'PRA_binary.tif', "w", **profile) as dest:
@@ -386,7 +386,7 @@ def PRA(forest_type, DEM, FOREST, radius, prob, winddir, windtol, pra_thd, sf, o
 
 if __name__ == "__main__":
     forest_type = str(sys.argv[1])
-    if forest_type in ['pcc', 'stems', 'bav']:
+    if forest_type in ['pcc', 'stems', 'bav', 'sen2cc']:
         DEM = sys.argv[2]
         FOREST = sys.argv[3]
         radius = int(sys.argv[4])

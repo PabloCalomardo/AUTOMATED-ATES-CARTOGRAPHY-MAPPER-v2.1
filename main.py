@@ -808,8 +808,8 @@ def step_06_flowpy_per_basin(
 
 def parse_args() -> argparse.Namespace:
 	parser = argparse.ArgumentParser(description="Run APP_ATES_PABLO pipeline (steps 1-14).")
-	parser.add_argument("--dem", default="inputs/DEM_BOW_SUMMIT.tif", help="Path to input DEM (GeoTIFF)")
-	parser.add_argument("--forest", default="inputs/FOREST_BOW_SUMMIT.tif", help="Path to forest density raster (GeoTIFF)")
+	parser.add_argument("--dem", default="inputs/DEM_ATES_CONNAUGHT.tif", help="Path to input DEM (GeoTIFF)") #DEM_BOW_SUMMIT
+	parser.add_argument("--forest", default="inputs/FOREST_ATES_CONNAUGHT.tif", help="Path to forest density raster (GeoTIFF)") # FOREST_BOW_SUMMIT
 	parser.add_argument(
 		"--forest-crs",
 		default=None,
@@ -843,8 +843,8 @@ def parse_args() -> argparse.Namespace:
 	)
 
 	# PRA parameters (keep defaults aligned with script docstring)
-	parser.add_argument("--radius", type=int, default=6) #default dem_gran 6
-	parser.add_argument("--prob", type=float, default=0.6) #default dem_gran 0.5
+	parser.add_argument("--radius", type=int, default=2) #default dem_gran 2
+	parser.add_argument("--prob", type=float, default=0.5) #default dem_gran 0.5
 	parser.add_argument("--winddir", type=int, default=0) #default dem_gran 0 (wind from north)
 	parser.add_argument("--windtol", type=int, default=180) #default dem_gran 180 (no wind direction preference)
 	parser.add_argument("--pra-thd", type=float, default=0.15) #default dem_gran 0.15 (PRA threshold for binary classification)
