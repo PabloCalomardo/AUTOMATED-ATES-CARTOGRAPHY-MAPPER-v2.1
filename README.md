@@ -252,6 +252,40 @@ Per controlar com es calcula l'overhead exposure (pas 8), usa:
 - `--overhead-cellcount-weight 2` per usar el maxim per cel.la entre capes normalitzades.
 - En mode ponderat, el pes de `z_delta` es calcula automaticament com `1 - overhead_cellcount_weight`.
 
+### 5) Verificar outputs ATES vs capes correctes (nou)
+
+Compara automaticament cada experiment `outputs_*` contra la seva capa correcta `Verificador/CORRECTE_*.tif`.
+
+```bash
+python Verificador/verify_ates_outputs.py
+```
+
+Per defecte compara:
+- Prediccio: `outputs/outputs_*/Definitive_Layers/Ponderador_ATES.tif`
+- Referencia: `Verificador/CORRECTE_*.tif`
+
+Important:
+- Si l'experimental i la correcta no tenen la mateixa extensio/resolucio, la prediccio es reprojeta a la graella de la correcta.
+- Les estadistiques nomes es calculen dins de l'extensio valida de la capa correcta (classes 0..4).
+
+Resultats a `Verificador/reports/verify_run_YYYYmmdd_HHMMSS/`:
+- `summary.csv` (metriques globals per experiment)
+- `class_metrics.csv` (metriques per classe 0..4)
+- `confusion_matrix_*.csv` (matriu de confusio)
+- `report.json` (resum complet)
+- `conclusions.md` (conclusions textuals automatiques)
+- `plots/overall_metrics.png` (comparativa global)
+- `plots/f1_per_class.png` (F1 per classe)
+- `plots/precision_recall_*.png` (detall per classe i experiment)
+- `plots/confusion_matrix_*.png` (matriu de confusio normalitzada + comptatges)
+- `visual_report.md` (report explicatiu amb grafics incrustats)
+- `report_visual.ipynb` (notebook executable per ampliar analisi)
+
+Opcions utiles del verificador:
+- `--no-plots` per generar nomes CSV/JSON/MD sense PNG.
+- `--no-notebook` per no crear l'`ipynb`.
+- `--execute-notebook` per executar automticament `report_visual.ipynb` despres de generar-lo (si tens jupyter instal.lat).
+
 ### Tots els parametres personalitzables (`python main.py --help`)
 
 Nota:
