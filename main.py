@@ -532,9 +532,6 @@ def step_14_ponderador_autoates(
 	forest_type: str,
 	output_name: str,
 	ponderador_mode: str = "hybrid",
-	ponderador_zdelta_landform_mode: str = "promote_merge_2_to_3",
-	ponderador_zdelta_threshold: float = 40.0,
-	ponderador_landform_window: int = 15,
 ) -> tuple[List[Path], Path]:
 	"""Run ponderador per basin and merge outputs into one global ATES raster."""
 	ponderador_mode = str(ponderador_mode).lower()
@@ -571,23 +568,6 @@ def step_14_ponderador_autoates(
 				f"Missing FP layer for ponderador in basin {basin_id}: {fp_path}"
 			)
 
-		z_delta_path = flowpy_res_dir / "z_delta.tif"
-		if not z_delta_path.exists() and str(ponderador_zdelta_landform_mode).lower() != "off":
-			raise FileNotFoundError(
-				f"Missing z_delta layer for ponderador boost in basin {basin_id}: {z_delta_path}"
-			)
-
-		landform_path = (
-			definitive_layers_dir
-			/ "2_Landforms"
-			/ f"2_Landforms_curvature_{int(ponderador_landform_window)}x{int(ponderador_landform_window)}.tif"
-		)
-		if not landform_path.exists() and str(ponderador_zdelta_landform_mode).lower() != "off":
-			raise FileNotFoundError(
-				"Ponderador boost requires landforms raster not found: "
-				f"{landform_path}. Run step 10 and ensure the requested window is generated."
-			)
-
 		basin_dir = definitive_layers_dir / f"Basin{basin_id}"
 		_ensure_dir(basin_dir)
 		exposure_path = _select_ponderador_exposure_layer(
@@ -600,10 +580,6 @@ def step_14_ponderador_autoates(
 			cell_count_path=exposure_path,
 			fp_path=fp_path,
 			sz_path=pra_basin_path,
-			z_delta_path=z_delta_path,
-			landform_path=landform_path,
-			zdelta_threshold=ponderador_zdelta_threshold,
-			zdelta_landform_mode=ponderador_zdelta_landform_mode,
 			out_dir=basin_dir,
 			forest_type=forest_type,
 			output_name=output_name,
@@ -1080,31 +1056,6 @@ def parse_args() -> argparse.Namespace:
 		default="hybrid",
 		help="Select ponderador implementation for step 14 (default: hybrid)",
 	)
-	parser.add_argument(
-		"--ponderador-zdelta-landform-mode",
-		choices=["off", "promote_exposure_2_to_3", "promote_merge_2_to_3"],
-		default="promote_merge_2_to_3",
-		help=(
-			"Optional boost rule using Flow-Py z_delta + landforms. "
-			"off disables. promote_exposure_2_to_3 promotes class 2->3 right after exposure reclass. "
-			"promote_merge_2_to_3 promotes class 2->3 after max(slope, flowpy, exposure)."
-		),
-	)
-	parser.add_argument(
-		"--ponderador-zdelta-threshold",
-		type=float,
-		default=40.0,
-		help="z_delta threshold used by ponderador landform boost (default: 40.0)",
-	)
-	parser.add_argument(
-		"--ponderador-landform-window",
-		type=int,
-		default=15,
-		help=(
-			"Landforms curvature window (e.g., 15 -> 2_Landforms_curvature_15x15.tif) "
-			"used by ponderador boost (default: 15)"
-		),
-	)
 
 	args = parser.parse_args()
 	if args.only_step6 and args.until_n is not None:
@@ -1458,9 +1409,6 @@ def main() -> None:
 		forest_type=ponderador_forest_type,
 		output_name=args.ponderador_output_name,
 		ponderador_mode=args.ponderador_mode,
-		ponderador_zdelta_landform_mode=args.ponderador_zdelta_landform_mode,
-		ponderador_zdelta_threshold=args.ponderador_zdelta_threshold,
-		ponderador_landform_window=args.ponderador_landform_window,
 	)
 	print(f"        ponderador_global: {ponderador_global_output.name}")
 	for basin_output in ponderador_basin_outputs:

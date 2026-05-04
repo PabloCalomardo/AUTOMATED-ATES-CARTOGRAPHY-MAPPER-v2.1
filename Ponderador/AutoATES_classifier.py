@@ -88,33 +88,6 @@ CC2 = 40
 ISL_SIZE = 30000
 
 
-DEFAULT_LANDFORM_CLASSES = (7, 8, 9)
-
-
-def _read_single_band_masked(path):
-    raster_path = Path(path).expanduser().resolve()
-    with rasterio.open(raster_path) as src:
-        band = src.read(1, masked=True)
-        data = np.asarray(band.data)
-        valid = ~np.asarray(band.mask)
-        profile = src.profile.copy()
-    return data, valid, profile
-
-
-def _check_alignment(profile_a, profile_b, label_a, label_b):
-    checks = [
-        ("width", profile_a.get("width"), profile_b.get("width")),
-        ("height", profile_a.get("height"), profile_b.get("height")),
-        ("transform", profile_a.get("transform"), profile_b.get("transform")),
-        ("crs", profile_a.get("crs"), profile_b.get("crs")),
-    ]
-    mismatches = [name for name, a, b in checks if a != b]
-    if mismatches:
-        raise ValueError(
-            f"Rasters are not aligned ({label_a} vs {label_b}): {', '.join(mismatches)}"
-        )
-
-
 def _tree_thresholds_for_forest_type(forest_type_value):
     forest_type_norm = str(forest_type_value).lower()
     if forest_type_norm == 'pcc':
@@ -139,11 +112,6 @@ def run_autoates_weighted(
     out_dir,
     forest_type,
     output_name='Ponderador_ATES.tif',
-    z_delta_path=None,
-    landform_path=None,
-    zdelta_threshold=40.0,
-    zdelta_landform_mode="off",
-    landform_classes=DEFAULT_LANDFORM_CLASSES,
 ):
     out_dir_path = Path(out_dir)
     out_dir_path.mkdir(parents=True, exist_ok=True)
@@ -154,21 +122,7 @@ def run_autoates_weighted(
     fp_path = Path(fp_path)
     sz_path = Path(sz_path)
 
-    zdelta_landform_mode = str(zdelta_landform_mode).lower()
-    zdelta_threshold = float(zdelta_threshold)
-    landform_classes = tuple(int(x) for x in landform_classes)
-
-    extra_inputs = []
-    if zdelta_landform_mode != "off":
-        if z_delta_path is None or landform_path is None:
-            raise ValueError(
-                "z_delta_path and landform_path are required when zdelta_landform_mode != 'off'"
-            )
-        z_delta_path = Path(z_delta_path)
-        landform_path = Path(landform_path)
-        extra_inputs = [z_delta_path, landform_path]
-
-    for input_path in [dem_path, canopy_path, cell_count_path, fp_path, sz_path] + extra_inputs:
+    for input_path in [dem_path, canopy_path, cell_count_path, fp_path, sz_path]:
         if not input_path.exists():
             raise FileNotFoundError(f"Missing ponderador input raster: {input_path}")
 
@@ -212,13 +166,6 @@ def run_autoates_weighted(
         CC2,
         ISL_SIZE,
         WIN_SIZE,
-
-        # Optional z_delta + landforms boost rule
-        z_delta_path=str(z_delta_path) if z_delta_path is not None else None,
-        landform_path=str(landform_path) if landform_path is not None else None,
-        zdelta_threshold=zdelta_threshold,
-        landform_classes=landform_classes,
-        zdelta_landform_mode=zdelta_landform_mode,
     )
 
     generated_output = out_dir_path / 'ates_gen.tif'
@@ -230,32 +177,7 @@ def run_autoates_weighted(
         shutil.copyfile(generated_output, final_output)
     return final_output
 
-def AutoATES(
-    wd,
-    DEM,
-    canopy,
-    cell_count,
-    FP,
-    SAT01,
-    SAT12,
-    SAT23,
-    SAT34,
-    AAT1,
-    AAT2,
-    AAT3,
-    TREE1,
-    TREE2,
-    TREE3,
-    CC1,
-    CC2,
-    ISL_SIZE,
-    WIN_SIZE,
-    z_delta_path=None,
-    landform_path=None,
-    zdelta_threshold=40.0,
-    landform_classes=DEFAULT_LANDFORM_CLASSES,
-    zdelta_landform_mode="off",
-):
+def AutoATES(wd, DEM, canopy, cell_count, FP, SAT01, SAT12, SAT23, SAT34, AAT1, AAT2, AAT3, TREE1, TREE2, TREE3, CC1, CC2, ISL_SIZE, WIN_SIZE):
     
     # --- Write input parameters to CSV file
     labels = ['DEM', 'canopy', 'cell_count', 'FP', 'SAT01', 'SAT12', 'SAT23', 'SAT34', 'AAT1', 'AAT2', 'AAT3', 'TREE1', 'TREE2', 'TREE3', 'CC1', 'CC2', 'ISL_SIZE', 'WIN_SIZE']
@@ -340,65 +262,22 @@ def AutoATES(
     with rasterio.open(os.path.join(wd, "flowpy.tif"), 'w', **profile) as dst:
         dst.write(flowpy)
 
-    zdelta_landform_mode = str(zdelta_landform_mode).lower()
-    landform_classes = tuple(int(x) for x in landform_classes)
-    zdelta_threshold = float(zdelta_threshold)
-
-    boost_mask = None
-    if zdelta_landform_mode != "off":
-        if z_delta_path is None or landform_path is None:
-            raise ValueError(
-                "z_delta_path and landform_path are required when zdelta_landform_mode != 'off'"
-            )
-
-        # Use DEM profile as a grid reference.
-        _, _, dem_profile = _read_single_band_masked(DEM)
-        z_arr, z_valid, z_profile = _read_single_band_masked(z_delta_path)
-        lf_arr, lf_valid, lf_profile = _read_single_band_masked(landform_path)
-        _check_alignment(dem_profile, z_profile, "DEM", "z_delta")
-        _check_alignment(dem_profile, lf_profile, "DEM", "landforms")
-
-        lf_arr = lf_arr.astype(np.uint8, copy=False)
-        is_target_landform = np.isin(lf_arr, np.array(landform_classes, dtype=np.uint8))
-
-        valid = np.logical_and.reduce(
-            [
-                z_valid,
-                lf_valid,
-                np.isfinite(z_arr),
-            ]
-        )
-        score = np.zeros(z_arr.shape, dtype=np.float32)
-        if np.any(valid):
-            score[valid] = z_arr[valid].astype(np.float32, copy=False) / zdelta_threshold
-        boost_mask = np.logical_and.reduce([valid, is_target_landform, score >= 1.0])
-
     # --- Add cell count criteria
 
     # --- Reclassify cell count criteria
     with rasterio.open(cell_count) as src:
-        array = src.read(1, masked=True)
+        array = src.read()
+        array = array.astype('int16')
         profile = src.profile
-        data = np.asarray(array.data).astype('float32', copy=False)
-        valid_mask = ~np.asarray(array.mask)
 
         # Update metadata
         profile.update({"driver": "GTiff", "nodata": -9999, 'dtype': 'int16'})
 
-        # Legacy behavior: treat invalid as 0.
-        data[~valid_mask] = 0.0
-
-        # Reclassify to 1/2/3
-        array = np.zeros(data.shape, dtype=np.int16)
-        array[np.where((0 <= data) & (data <= CC1))] = 1
-        array[np.where((CC1 < data) & (data <= CC2))] = 2
-        array[np.where((CC2 < data) & (data <= 20000))] = 3
-
-        if zdelta_landform_mode == "promote_exposure_2_to_3" and boost_mask is not None and np.any(boost_mask):
-            promote = np.logical_and(boost_mask, array == 2)
-            array[promote] = 3
-
-        array = array.reshape(1, array.shape[0], array.shape[1])
+        # Reclassify
+        array[np.where(array == -9999)] = 0
+        array[np.where((0 <= array) & (array <= CC1))] = 1
+        array[np.where((CC1 < array) & (array <= CC2))] = 2
+        array[np.where((CC2 < array) & (array <= 20000))] = 3
 
     with rasterio.open(os.path.join(wd, "cellcount_reclass.tif"), 'w', **profile) as dst:
         dst.write(array)
@@ -416,12 +295,6 @@ def AutoATES(
 
     ates = np.maximum(src1, src2)
     ates = np.maximum(ates, src3)
-
-    if zdelta_landform_mode == "promote_merge_2_to_3" and boost_mask is not None and np.any(boost_mask):
-        promote = np.logical_and(boost_mask, ates[0] == 2)
-        ates0 = ates[0]
-        ates0[promote] = 3
-        ates[0] = ates0
 
     with rasterio.open(os.path.join(wd, "merge_new.tif"), 'w', **profile) as dst:
         dst.write(ates)

@@ -114,15 +114,6 @@ El pipeline principal ([main.py](main.py)) executa 14 passos:
 14. Ponderador weighted ATES (nou modul)
    - Executa el ponderador per basin i fusiona un raster global.
    - Usa sempre `Exposure_zdelta_cellcount.tif` com a capa d'exposicio d'entrada.
-    - Opcional: regla de "boost" basada en `z_delta` (Flow-Py) + landforms (curvatura) per corregir casos on el resultat final queda a classe 2 pero hauria de ser 3.
-       - Control: `--ponderador-zdelta-landform-mode`.
-       - Modes:
-          - `off`: desactiva la regla.
-          - `promote_exposure_2_to_3`: aplica el 2->3 just despres de reclassificar la capa d'exposicio.
-          - `promote_merge_2_to_3`: aplica el 2->3 despres del merge final `max(slope, flowpy, exposure)`.
-       - Parametres:
-          - `--ponderador-zdelta-threshold` (default `40.0`).
-          - `--ponderador-landform-window` (default `15`, usa `2_Landforms_curvature_15x15.tif`).
 
 ## Moduls del projecte
 
@@ -391,27 +382,6 @@ Nota:
 - El pas 14 usa sempre `Definitive_Layers/BasinX/Exposure_zdelta_cellcount.tif`.
 - `--ponderador-forest-type` (default: `None`; opcions: `stems`, `bav`, `pcc`, `sen2cc`; si no es passa hereta `--forest-type`)
 - `--ponderador-output-name` (default: `Ponderador_ATES.tif`)
-- `--ponderador-mode` (default: `hybrid`; opcions: `hybrid`, `original`)
-- `--ponderador-zdelta-landform-mode` (default: `promote_merge_2_to_3`; opcions: `off`, `promote_exposure_2_to_3`, `promote_merge_2_to_3`)
-- `--ponderador-zdelta-threshold` (default: `40.0`)
-- `--ponderador-landform-window` (default: `15`; busca `Definitive_Layers/2_Landforms/2_Landforms_curvature_15x15.tif`)
-
-Notes sobre el boost (pas 14):
-- Necessita que existeixi `z_delta.tif` dins del darrer `res_*` de cada basin a `outputs/.../Flow-Py/pra_basin_X/res_*/z_delta.tif`.
-- Necessita que existeixi el raster de landforms a `Definitive_Layers/2_Landforms/` per la finestra demanada (cal haver executat el pas 10).
-- Recomanacio per comparar baseline vs boost sense sobreescriure:
-
-```bash
-# baseline (sense boost)
-python main.py --until-n 14 --ponderador-zdelta-landform-mode off
-
-# boost en un fitxer separat
-python main.py --until-n 14 \
-   --ponderador-output-name Ponderador_ATES_boost.tif \
-   --ponderador-zdelta-landform-mode promote_merge_2_to_3 \
-   --ponderador-zdelta-threshold 40 \
-   --ponderador-landform-window 15
-```
 
 Exemple complet:
 
