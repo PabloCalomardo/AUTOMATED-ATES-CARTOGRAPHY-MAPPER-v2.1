@@ -8,6 +8,7 @@ import csv
 import scipy.ndimage
 from rasterio.fill import fillnodata
 from pathlib import Path
+import re
 
 # --- Set Input Files
 DEM = 'test-data/Bow Summit/dem.tif'
@@ -103,6 +104,413 @@ def _tree_thresholds_for_forest_type(forest_type_value):
     )
 
 
+def _same_grid(ref_src, other_src):
+    return (
+        ref_src.width == other_src.width
+        and ref_src.height == other_src.height
+        and ref_src.transform == other_src.transform
+        and ref_src.crs == other_src.crs
+    )
+
+
+def _parse_basin_id(out_dir_path):
+    match = re.match(r"^Basin(\d+)$", out_dir_path.name, flags=re.IGNORECASE)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def _parse_zone_avalanche_id(path_obj):
+    match = re.match(r"^Ava_(\d+)\.tif$", path_obj.name, flags=re.IGNORECASE)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def _find_first_existing(paths):
+    for path in paths:
+        if path.exists():
+            return path
+    return None
+
+
+def _load_entropy_cluster_mask(
+    definitive_layers_dir,
+    ref_src,
+    entropy_threshold,
+    min_cluster_cells,
+):
+    clustered_candidates = [
+        definitive_layers_dir / 'Landforms_entropy_5to30_clustered.tif',
+        definitive_layers_dir / '2_Landforms_entropy_5to30_clustered.tif',
+        definitive_layers_dir / '2_Landforms' / 'Landforms_entropy_5to30_clustered.tif',
+        definitive_layers_dir / '2_Landforms' / '2_Landforms_entropy_5to30_clustered.tif',
+    ]
+    clustered_path = _find_first_existing(clustered_candidates)
+    if clustered_path is not None:
+        with rasterio.open(str(clustered_path)) as src_clustered:
+            if not _same_grid(ref_src, src_clustered):
+                return None
+            arr = src_clustered.read(1)
+            nodata = src_clustered.nodata
+
+        if nodata is None:
+            return arr > 0
+        return np.logical_and(arr != nodata, arr > 0)
+
+    entropy_candidates = [
+        definitive_layers_dir / '2_Landforms_entropy_5to30.tif',
+        definitive_layers_dir / 'Landforms_entropy_5to30.tif',
+        definitive_layers_dir / '2_Landforms' / '2_Landforms_entropy_5to30.tif',
+        definitive_layers_dir / '2_Landforms' / 'Landforms_entropy_5to30.tif',
+    ]
+    entropy_path = _find_first_existing(entropy_candidates)
+    if entropy_path is None:
+        return None
+
+    with rasterio.open(str(entropy_path)) as src_entropy:
+        if not _same_grid(ref_src, src_entropy):
+            return None
+        entropy = src_entropy.read(1).astype(np.float32, copy=False)
+        nodata = src_entropy.nodata
+
+    if nodata is None:
+        valid = np.isfinite(entropy)
+    elif isinstance(nodata, float) and np.isnan(nodata):
+        valid = np.isfinite(entropy)
+    else:
+        valid = np.logical_and(np.isfinite(entropy), entropy != nodata)
+
+    high_entropy = np.logical_and(valid, entropy >= float(entropy_threshold))
+    if min_cluster_cells is None or int(min_cluster_cells) <= 1:
+        return high_entropy
+
+    labels, num_labels = scipy.ndimage.label(high_entropy)
+    if num_labels == 0:
+        return high_entropy
+
+    out_mask = np.zeros(high_entropy.shape, dtype=bool)
+    min_cells = int(min_cluster_cells)
+    for label_id in range(1, num_labels + 1):
+        mask = labels == label_id
+        if np.count_nonzero(mask) >= min_cells:
+            out_mask[mask] = True
+    return out_mask
+
+
+def _reclassify_class4_by_runout(
+    ates_path,
+    basin_dir,
+    definitive_layers_dir,
+    landform_window,
+    safe_classes,
+    unsafe_classes,
+    safe_pct_threshold,
+    unsafe_pct_keep_threshold,
+    entropy_pct_keep_threshold,
+    entropy_max_for_downgrade,
+    entropy_threshold,
+    entropy_min_cluster_cells,
+):
+    zones_dir = basin_dir / 'Star_propagating_Ending_Zones'
+    if not zones_dir.exists():
+        return ates_path
+
+    basin_id = _parse_basin_id(basin_dir)
+    if basin_id is None:
+        return ates_path
+
+    landforms_path = (
+        definitive_layers_dir
+        / '2_Landforms'
+        / f'2_Landforms_curvature_{int(landform_window)}x{int(landform_window)}.tif'
+    )
+    if not landforms_path.exists():
+        return ates_path
+
+    safe_values = np.array(list(safe_classes), dtype=np.int16)
+    unsafe_values = np.array(list(unsafe_classes), dtype=np.int16)
+
+    decision_codes = {
+        'keep_4_rule_not_met': 1,
+        'keep_4_high_unsafe_pct': 2,
+        'keep_4_entropy_cluster_presence': 3,
+        'keep_4_no_start_overlap': 4,
+        'keep_4_empty_propagation': 5,
+        'downgrade_to_3': 6,
+    }
+
+    with rasterio.open(str(ates_path)) as src_ates:
+        ates = src_ates.read(1)
+        nodata_ates = src_ates.nodata
+        ates_profile = src_ates.profile.copy()
+
+    with rasterio.open(str(landforms_path)) as src_landforms:
+        landforms = src_landforms.read(1)
+        landforms_nodata = src_landforms.nodata
+
+    entropy_cluster_mask = _load_entropy_cluster_mask(
+        definitive_layers_dir=definitive_layers_dir,
+        ref_src=src_ates,
+        entropy_threshold=entropy_threshold,
+        min_cluster_cells=entropy_min_cluster_cells,
+    )
+    if entropy_cluster_mask is None:
+        entropy_cluster_mask = np.zeros(ates.shape, dtype=bool)
+
+    ava_start_masks = {}
+    ava_prop_masks = {}
+    for ava_path in sorted(zones_dir.glob('Ava_*.tif')):
+        avalanche_id = _parse_zone_avalanche_id(ava_path)
+        if avalanche_id is None:
+            continue
+
+        with rasterio.open(str(ava_path)) as src_zone:
+            zones = src_zone.read(1)
+            nodata_zone = src_zone.nodata
+
+        if nodata_zone is None:
+            valid_zone = np.isfinite(zones)
+        else:
+            valid_zone = zones != nodata_zone
+
+        start_mask = np.logical_and(valid_zone, zones == 1)
+        prop_mask = np.logical_and(valid_zone, zones == 2)
+        if np.count_nonzero(start_mask) == 0 and np.count_nonzero(prop_mask) == 0:
+            continue
+
+        ava_start_masks[avalanche_id] = start_mask
+        ava_prop_masks[avalanche_id] = prop_mask
+
+    if not ava_start_masks:
+        return ates_path
+
+    class4_mask = ates == 4
+    if nodata_ates is not None:
+        class4_mask = np.logical_and(class4_mask, ates != nodata_ates)
+
+    labels, num_labels = scipy.ndimage.label(class4_mask)
+    if num_labels == 0:
+        return ates_path
+
+    cluster_id_layer = np.zeros(ates.shape, dtype=np.int32)
+    decision_layer = np.zeros(ates.shape, dtype=np.uint8)
+
+    if landforms_nodata is None:
+        valid_landforms = np.isfinite(landforms)
+    else:
+        valid_landforms = landforms != landforms_nodata
+
+    audit_rows = []
+    reclassified_clusters = 0
+
+    for cluster_id in range(1, num_labels + 1):
+            cluster_mask = labels == cluster_id
+            cluster_cells = int(np.count_nonzero(cluster_mask))
+            if cluster_cells == 0:
+                continue
+
+            cluster_id_layer[cluster_mask] = cluster_id
+
+            selected_ava = None
+            best_overlap = 0
+            for avalanche_id, start_mask in ava_start_masks.items():
+                overlap = int(np.count_nonzero(np.logical_and(cluster_mask, start_mask)))
+                if overlap > best_overlap:
+                    best_overlap = overlap
+                    selected_ava = avalanche_id
+
+            if selected_ava is None or best_overlap == 0:
+                decision_layer[cluster_mask] = decision_codes['keep_4_no_start_overlap']
+                audit_rows.append({
+                    'basin_id': basin_id,
+                    'cluster_id': cluster_id,
+                    'cluster_cells': cluster_cells,
+                    'selected_avalanche_id': '',
+                    'start_overlap_cells': 0,
+                    'propagation_cells': 0,
+                    'safe_pct_789': 0.0,
+                    'unsafe_pct_123': 0.0,
+                    'entropy_cluster_pct': 0.0,
+                    'decision': 'keep_4',
+                    'reason': 'no_start_overlap',
+                    'decision_code': decision_codes['keep_4_no_start_overlap'],
+                })
+                continue
+
+            propagation_mask = ava_prop_masks.get(selected_ava)
+            if propagation_mask is None:
+                propagation_mask = np.zeros(cluster_mask.shape, dtype=bool)
+
+            propagation_mask = np.logical_and(propagation_mask, valid_landforms)
+            propagation_cells = int(np.count_nonzero(propagation_mask))
+            if propagation_cells == 0:
+                decision_layer[cluster_mask] = decision_codes['keep_4_empty_propagation']
+                audit_rows.append({
+                    'basin_id': basin_id,
+                    'cluster_id': cluster_id,
+                    'cluster_cells': cluster_cells,
+                    'selected_avalanche_id': selected_ava,
+                    'start_overlap_cells': best_overlap,
+                    'propagation_cells': 0,
+                    'safe_pct_789': 0.0,
+                    'unsafe_pct_123': 0.0,
+                    'entropy_cluster_pct': 0.0,
+                    'decision': 'keep_4',
+                    'reason': 'empty_propagation',
+                    'decision_code': decision_codes['keep_4_empty_propagation'],
+                })
+                continue
+
+            prop_landforms = landforms[propagation_mask].astype(np.int16, copy=False)
+            safe_count = int(np.count_nonzero(np.isin(prop_landforms, safe_values)))
+            unsafe_count = int(np.count_nonzero(np.isin(prop_landforms, unsafe_values)))
+            entropy_count = int(np.count_nonzero(np.logical_and(propagation_mask, entropy_cluster_mask)))
+
+            safe_pct = 100.0 * safe_count / float(propagation_cells)
+            unsafe_pct = 100.0 * unsafe_count / float(propagation_cells)
+            entropy_pct = 100.0 * entropy_count / float(propagation_cells)
+
+            decision = 'keep_4'
+            reason = 'rule_not_met'
+
+            if unsafe_pct > float(unsafe_pct_keep_threshold):
+                decision = 'keep_4'
+                reason = 'high_unsafe_pct'
+                decision_layer[cluster_mask] = decision_codes['keep_4_high_unsafe_pct']
+            elif safe_pct >= float(safe_pct_threshold) and entropy_pct <= float(entropy_max_for_downgrade):
+                ates[cluster_mask] = 3
+                reclassified_clusters += 1
+                decision = 'downgrade_to_3'
+                reason = 'high_safe_low_entropy'
+                decision_layer[cluster_mask] = decision_codes['downgrade_to_3']
+            elif safe_pct >= 60.0 and entropy_pct >= float(entropy_pct_keep_threshold):
+                decision = 'keep_4'
+                reason = 'entropy_cluster_presence'
+                decision_layer[cluster_mask] = decision_codes['keep_4_entropy_cluster_presence']
+            else:
+                decision_layer[cluster_mask] = decision_codes['keep_4_rule_not_met']
+
+            audit_rows.append({
+                'basin_id': basin_id,
+                'cluster_id': cluster_id,
+                'cluster_cells': cluster_cells,
+                'selected_avalanche_id': selected_ava,
+                'start_overlap_cells': best_overlap,
+                'propagation_cells': propagation_cells,
+                'safe_pct_789': round(safe_pct, 3),
+                'unsafe_pct_123': round(unsafe_pct, 3),
+                'entropy_cluster_pct': round(entropy_pct, 3),
+                'decision': decision,
+                'reason': reason,
+                'decision_code': int(decision_layer[cluster_mask][0]),
+            })
+
+    if reclassified_clusters > 0:
+        with rasterio.open(str(ates_path), 'r+') as dst_ates:
+            dst_ates.write(ates.astype(np.int16, copy=False), 1)
+
+    audit_csv = basin_dir / 'class4_runout_reclassification.csv'
+    with audit_csv.open('w', newline='', encoding='utf-8') as fp_csv:
+        writer = csv.DictWriter(
+            fp_csv,
+            fieldnames=[
+                'basin_id',
+                'cluster_id',
+                'cluster_cells',
+                'selected_avalanche_id',
+                'start_overlap_cells',
+                'propagation_cells',
+                'safe_pct_789',
+                'unsafe_pct_123',
+                'entropy_cluster_pct',
+                'decision',
+                'reason',
+                'decision_code',
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(audit_rows)
+
+    cluster_id_path = basin_dir / 'class4_clusters_id.tif'
+    cluster_profile = ates_profile.copy()
+    cluster_profile.update(dtype='int32', nodata=0, count=1, compress='deflate')
+    with rasterio.open(str(cluster_id_path), 'w', **cluster_profile) as dst_cluster:
+        dst_cluster.write(cluster_id_layer.astype(np.int32, copy=False), 1)
+
+    decision_path = basin_dir / 'class4_reclass_decision.tif'
+    decision_profile = ates_profile.copy()
+    decision_profile.update(dtype='uint8', nodata=0, count=1, compress='deflate')
+    with rasterio.open(str(decision_path), 'w', **decision_profile) as dst_decision:
+        dst_decision.write(decision_layer.astype(np.uint8, copy=False), 1)
+
+    reason_counts = {
+        'rule_not_met': 0,
+        'high_unsafe_pct': 0,
+        'entropy_cluster_presence': 0,
+        'no_start_overlap': 0,
+        'empty_propagation': 0,
+        'high_safe_low_entropy': 0,
+    }
+    for row in audit_rows:
+        reason = row.get('reason')
+        if reason in reason_counts:
+            reason_counts[reason] += 1
+
+    total_clusters = len(audit_rows)
+    downgraded_clusters = int(np.count_nonzero(decision_layer == decision_codes['downgrade_to_3']))
+    kept_clusters = total_clusters - downgraded_clusters
+
+    summary_csv = basin_dir / 'class4_runout_reclassification_summary.csv'
+    with summary_csv.open('w', newline='', encoding='utf-8') as fp_summary:
+        writer = csv.DictWriter(
+            fp_summary,
+            fieldnames=[
+                'basin_id',
+                'total_class4_clusters',
+                'downgraded_to_3_clusters',
+                'kept_as_4_clusters',
+                'downgraded_pct',
+                'kept_pct',
+                'count_keep_rule_not_met',
+                'count_keep_high_unsafe_pct',
+                'count_keep_entropy_cluster_presence',
+                'count_keep_no_start_overlap',
+                'count_keep_empty_propagation',
+                'count_downgrade_high_safe_low_entropy',
+            ],
+        )
+        writer.writeheader()
+        writer.writerow({
+            'basin_id': basin_id,
+            'total_class4_clusters': total_clusters,
+            'downgraded_to_3_clusters': downgraded_clusters,
+            'kept_as_4_clusters': kept_clusters,
+            'downgraded_pct': 0.0 if total_clusters == 0 else round(100.0 * downgraded_clusters / total_clusters, 3),
+            'kept_pct': 0.0 if total_clusters == 0 else round(100.0 * kept_clusters / total_clusters, 3),
+            'count_keep_rule_not_met': reason_counts['rule_not_met'],
+            'count_keep_high_unsafe_pct': reason_counts['high_unsafe_pct'],
+            'count_keep_entropy_cluster_presence': reason_counts['entropy_cluster_presence'],
+            'count_keep_no_start_overlap': reason_counts['no_start_overlap'],
+            'count_keep_empty_propagation': reason_counts['empty_propagation'],
+            'count_downgrade_high_safe_low_entropy': reason_counts['high_safe_low_entropy'],
+        })
+
+    legend_txt = basin_dir / 'class4_reclass_decision_legend.txt'
+    legend_txt.write_text(
+        "0 = no original class-4 cluster\n"
+        "1 = kept class 4 (rule_not_met)\n"
+        "2 = kept class 4 (high_unsafe_pct)\n"
+        "3 = kept class 4 (entropy_cluster_presence)\n"
+        "4 = kept class 4 (no_start_overlap)\n"
+        "5 = kept class 4 (empty_propagation)\n"
+        "6 = downgraded to class 3 (high_safe_low_entropy)\n",
+        encoding='utf-8',
+    )
+
+    return ates_path
+
+
 def run_autoates_weighted(
     dem_path,
     canopy_path,
@@ -112,6 +520,16 @@ def run_autoates_weighted(
     out_dir,
     forest_type,
     output_name='Ponderador_ATES.tif',
+    class4_reclass_enabled=True,
+    class4_landform_window=10,
+    class4_safe_classes=(7, 8, 9),
+    class4_unsafe_classes=(1, 2, 3),
+    class4_safe_pct_threshold=80.0,
+    class4_unsafe_pct_keep_threshold=30.0,
+    class4_entropy_pct_keep_threshold=8.0,
+    class4_entropy_max_for_downgrade=10.0,
+    class4_entropy_threshold=0.55,
+    class4_entropy_min_cluster_cells=25,
 ):
     out_dir_path = Path(out_dir)
     out_dir_path.mkdir(parents=True, exist_ok=True)
@@ -171,6 +589,23 @@ def run_autoates_weighted(
     generated_output = out_dir_path / 'ates_gen.tif'
     if not generated_output.exists():
         raise RuntimeError(f"Expected ponderador output not generated: {generated_output}")
+
+    if class4_reclass_enabled:
+        definitive_layers_dir = out_dir_path.parent
+        _reclassify_class4_by_runout(
+            ates_path=generated_output,
+            basin_dir=out_dir_path,
+            definitive_layers_dir=definitive_layers_dir,
+            landform_window=class4_landform_window,
+            safe_classes=class4_safe_classes,
+            unsafe_classes=class4_unsafe_classes,
+            safe_pct_threshold=class4_safe_pct_threshold,
+            unsafe_pct_keep_threshold=class4_unsafe_pct_keep_threshold,
+            entropy_pct_keep_threshold=class4_entropy_pct_keep_threshold,
+            entropy_max_for_downgrade=class4_entropy_max_for_downgrade,
+            entropy_threshold=class4_entropy_threshold,
+            entropy_min_cluster_cells=class4_entropy_min_cluster_cells,
+        )
 
     final_output = out_dir_path / output_name
     if generated_output.resolve() != final_output.resolve():

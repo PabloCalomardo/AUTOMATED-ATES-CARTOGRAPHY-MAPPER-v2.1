@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime
 import importlib.util
+import inspect
 import json
 import re
 import subprocess
@@ -488,6 +489,16 @@ def _merge_rasters_max(input_paths: List[Path], output_path: Path) -> Path:
 		base_transform = src0.transform
 		base_crs = src0.crs
 		nodata0 = src0.nodata
+		global_downgrade_mask = np.zeros_like(merged, dtype=bool)
+		try:
+			from pathlib import Path as _Path
+			dec_path0 = _Path(first).parent / 'class4_reclass_decision.tif'
+			if dec_path0.exists():
+				with rasterio.open(str(dec_path0)) as src_dec0:
+					if src_dec0.width == src0.width and src_dec0.height == src0.height and src_dec0.transform == src0.transform and src_dec0.crs == src0.crs:
+						global_downgrade_mask |= (src_dec0.read(1) == 6)
+		except Exception:
+			pass
 
 	def _valid(arr, nodata):
 		if nodata is None:
@@ -507,13 +518,34 @@ def _merge_rasters_max(input_paths: List[Path], output_path: Path) -> Path:
 				)
 			arr = src.read(1)
 			nodata = src.nodata
+			# try load per-basin decision raster to detect downgrades
+			decision_arr = None
+			try:
+				from pathlib import Path as _Path
+				dec_path = _Path(path).parent / 'class4_reclass_decision.tif'
+				if dec_path.exists():
+					with rasterio.open(str(dec_path)) as src_dec:
+						if src_dec.width == src.width and src_dec.height == src.height and src_dec.transform == src.transform and src_dec.crs == src.crs:
+							decision_arr = src_dec.read(1)
+			except Exception:
+				decision_arr = None
 
 		valid = _valid(arr, nodata)
 		only_new = valid & (~merged_valid)
 		both = valid & merged_valid
+		if decision_arr is not None:
+			global_downgrade_mask |= (decision_arr == 6)
+		# assign new pixels
 		merged[only_new] = arr[only_new]
-		merged[both] = np.maximum(merged[both], arr[both])
+
+		# handle pixels present in both with the standard max merge
+		if both.any():
+			merged[both] = np.maximum(merged[both], arr[both])
+
 		merged_valid = merged_valid | valid
+
+	if global_downgrade_mask.any():
+		merged[global_downgrade_mask] = 3
 
 	profile.update(dtype="int16", nodata=nodata_out, compress="deflate")
 	output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -532,6 +564,16 @@ def step_14_ponderador_autoates(
 	forest_type: str,
 	output_name: str,
 	ponderador_mode: str = "hybrid",
+	class4_reclass_enabled: bool = True,
+	class4_landform_window: int = 10,
+	class4_safe_classes: tuple[int, ...] = (7, 8, 9),
+	class4_unsafe_classes: tuple[int, ...] = (1, 2, 3),
+	class4_safe_pct_threshold: float = 80.0,
+	class4_unsafe_pct_keep_threshold: float = 30.0,
+	class4_entropy_pct_keep_threshold: float = 8.0,
+	class4_entropy_max_for_downgrade: float = 0.0,
+	class4_entropy_threshold: float = 0.55,
+	class4_entropy_min_cluster_cells: int = 25,
 ) -> tuple[List[Path], Path]:
 	"""Run ponderador per basin and merge outputs into one global ATES raster."""
 	ponderador_mode = str(ponderador_mode).lower()
@@ -546,6 +588,7 @@ def step_14_ponderador_autoates(
 
 	ponderador_module = importlib.import_module(module_name)
 	run_autoates_weighted = getattr(ponderador_module, "run_autoates_weighted")
+	supported_params = set(inspect.signature(run_autoates_weighted).parameters.keys())
 
 	_ensure_dir(definitive_layers_dir)
 	basins = _list_pra_basins(watershed_out_dir)
@@ -574,16 +617,32 @@ def step_14_ponderador_autoates(
 			basin_dir=basin_dir,
 		)
 
-		basin_output = run_autoates_weighted(
-			dem_path=dem_path,
-			canopy_path=forest_path,
-			cell_count_path=exposure_path,
-			fp_path=fp_path,
-			sz_path=pra_basin_path,
-			out_dir=basin_dir,
-			forest_type=forest_type,
-			output_name=output_name,
-		)
+		run_kwargs: Dict[str, Any] = {
+			"dem_path": dem_path,
+			"canopy_path": forest_path,
+			"cell_count_path": exposure_path,
+			"fp_path": fp_path,
+			"sz_path": pra_basin_path,
+			"out_dir": basin_dir,
+			"forest_type": forest_type,
+			"output_name": output_name,
+			"class4_reclass_enabled": class4_reclass_enabled,
+			"class4_landform_window": class4_landform_window,
+			"class4_safe_classes": class4_safe_classes,
+			"class4_unsafe_classes": class4_unsafe_classes,
+			"class4_safe_pct_threshold": class4_safe_pct_threshold,
+			"class4_unsafe_pct_keep_threshold": class4_unsafe_pct_keep_threshold,
+			"class4_entropy_pct_keep_threshold": class4_entropy_pct_keep_threshold,
+			"class4_entropy_max_for_downgrade": class4_entropy_max_for_downgrade,
+			"class4_entropy_threshold": class4_entropy_threshold,
+			"class4_entropy_min_cluster_cells": class4_entropy_min_cluster_cells,
+		}
+		filtered_kwargs = {
+			k: v
+			for k, v in run_kwargs.items()
+			if k in supported_params
+		}
+		basin_output = run_autoates_weighted(**filtered_kwargs)
 		basin_outputs.append(basin_output)
 
 	global_output = _merge_rasters_max(
@@ -860,8 +919,8 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--quiet", action="store_true", help="Reduce verbose logs for some steps")
 
 	# --- PRA_Divisor parameterization (defaults match PRA_Divisor.py)
-	parser.add_argument("--divisor-stream-threshold", type=float, default=850) #default dem_gran 850
-	parser.add_argument("--divisor-channel-init-exponent", type=float, default=0) #default dem_gran v0.7
+	parser.add_argument("--divisor-stream-threshold", type=float, default=100) #default dem_gran 850
+	parser.add_argument("--divisor-channel-init-exponent", type=float, default=1) #default dem_gran v0
 	parser.add_argument("--divisor-channel-min-slope", type=float, default=0.005) #default dem_gran v1 005
 
 	# --- Watershed_Subdivisions parameterization (defaults match PRA_Watershed_Subdivision.py)
@@ -883,7 +942,7 @@ def parse_args() -> argparse.Namespace:
 		default="Flow-py_Autoates_Editat/FlowPy_detrainment",
 		help="Path to Flow-Py code directory containing main.py",
 	)
-	parser.add_argument("--flowpy-alpha", type=int, default=22)
+	parser.add_argument("--flowpy-alpha", type=int, default=24)
 	parser.add_argument("--flowpy-exponent", type=int, default=8)
 	parser.add_argument("--flowpy-flux", type=float, default=0.003)
 	parser.add_argument("--flowpy-max-z", type=float, default=270) #default ESTANDARD 270
@@ -1020,7 +1079,7 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument(
 		"--zones-ending-threshold",
 		type=float,
-		default=0.075,
+		default=0.19,
 		help="Flux threshold for ending zone (flux < threshold)",
 	)
 
@@ -1056,14 +1115,110 @@ def parse_args() -> argparse.Namespace:
 		default="hybrid",
 		help="Select ponderador implementation for step 14 (default: hybrid)",
 	)
+	parser.add_argument(
+		"--ponderador-class4-disable-reclass",
+		action="store_true",
+		help="Disable runout-based class 4 -> class 3 reclassification in ponderador hybrid mode",
+	)
+	parser.add_argument(
+		"--ponderador-class4-landform-window",
+		type=int,
+		default=10,
+		help="Landforms window used in class 4 reclassification (default: 10 -> 10x10)",
+	)
+	parser.add_argument(
+		"--ponderador-class4-safe-classes",
+		default="7,8,9",
+		help="Comma-separated landforms considered safe for class 4 reclassification (default: 7,8,9)",
+	)
+	parser.add_argument(
+		"--ponderador-class4-unsafe-classes",
+		default="1,2,3",
+		help="Comma-separated landforms considered unsafe for class 4 reclassification (default: 1,2,3)",
+	)
+	parser.add_argument(
+		"--ponderador-class4-safe-pct-threshold",
+		type=float,
+		default=80.0,
+		help="Downgrade threshold: min %% of propagation over safe classes (default: 80)",
+	)
+	parser.add_argument(
+		"--ponderador-class4-unsafe-pct-keep-threshold",
+		type=float,
+		default=15.0,
+		help="Keep class 4 threshold when propagation over unsafe classes exceeds this %% (default: 30)",
+	)
+	parser.add_argument(
+		"--ponderador-class4-entropy-pct-keep-threshold",
+		type=float,
+		default=5.0,
+		help="Keep class 4 when safe context is moderate and entropy cluster coverage reaches this %% (default: 5)",
+	)
+	parser.add_argument(
+		"--ponderador-class4-entropy-max-for-downgrade",
+		type=float,
+		default=1.0,
+		help="Max entropy-cluster %% allowed for downgrade (default: 1)",
+	)
+	parser.add_argument(
+		"--ponderador-class4-entropy-threshold",
+		type=float,
+		default=0.50,
+		help="High-entropy threshold used when clustered entropy raster is missing (default: 0.55)",
+	)
+	parser.add_argument(
+		"--ponderador-class4-entropy-min-cluster-cells",
+		type=int,
+		default=25,
+		help="Min connected-cell size for derived high-entropy clusters (default: 25)",
+	)
 
 	args = parser.parse_args()
+
+	def _parse_class_set(text: str, arg_name: str) -> tuple[int, ...]:
+		values = [chunk.strip() for chunk in str(text).split(",") if chunk.strip()]
+		if not values:
+			parser.error(f"{arg_name} must contain at least one class id")
+		parsed: List[int] = []
+		for raw in values:
+			try:
+				klass = int(raw)
+			except ValueError:
+				parser.error(f"{arg_name} contains a non-integer class: {raw}")
+			if klass < 1 or klass > 9:
+				parser.error(f"{arg_name} contains invalid class {klass}. Allowed range is 1..9")
+			parsed.append(klass)
+		return tuple(sorted(set(parsed)))
+
 	if args.only_step6 and args.until_n is not None:
 		parser.error("--only-step6 cannot be used together with --until-n")
 	if args.zones_start_threshold <= args.zones_ending_threshold:
 		parser.error("--zones-start-threshold must be greater than --zones-ending-threshold")
 	if (args.overhead_cellcount_weight < 0.0 or args.overhead_cellcount_weight > 1.0) and args.overhead_cellcount_weight != 2.0:
 		parser.error("--overhead-cellcount-weight must be in [0, 1] or 2 (max mode)")
+	for pct_value, pct_name in [
+		(args.ponderador_class4_safe_pct_threshold, "--ponderador-class4-safe-pct-threshold"),
+		(args.ponderador_class4_unsafe_pct_keep_threshold, "--ponderador-class4-unsafe-pct-keep-threshold"),
+		(args.ponderador_class4_entropy_pct_keep_threshold, "--ponderador-class4-entropy-pct-keep-threshold"),
+		(args.ponderador_class4_entropy_max_for_downgrade, "--ponderador-class4-entropy-max-for-downgrade"),
+	]:
+		if pct_value < 0.0 or pct_value > 100.0:
+			parser.error(f"{pct_name} must be in [0, 100]")
+	if args.ponderador_class4_landform_window < 3:
+		parser.error("--ponderador-class4-landform-window must be >= 3")
+	if args.ponderador_class4_entropy_threshold < 0.0 or args.ponderador_class4_entropy_threshold > 1.0:
+		parser.error("--ponderador-class4-entropy-threshold must be in [0, 1]")
+	if args.ponderador_class4_entropy_min_cluster_cells < 1:
+		parser.error("--ponderador-class4-entropy-min-cluster-cells must be >= 1")
+
+	args.ponderador_class4_safe_classes = _parse_class_set(
+		args.ponderador_class4_safe_classes,
+		"--ponderador-class4-safe-classes",
+	)
+	args.ponderador_class4_unsafe_classes = _parse_class_set(
+		args.ponderador_class4_unsafe_classes,
+		"--ponderador-class4-unsafe-classes",
+	)
 	return args
 
 
@@ -1409,6 +1564,16 @@ def main() -> None:
 		forest_type=ponderador_forest_type,
 		output_name=args.ponderador_output_name,
 		ponderador_mode=args.ponderador_mode,
+		class4_reclass_enabled=not args.ponderador_class4_disable_reclass,
+		class4_landform_window=args.ponderador_class4_landform_window,
+		class4_safe_classes=args.ponderador_class4_safe_classes,
+		class4_unsafe_classes=args.ponderador_class4_unsafe_classes,
+		class4_safe_pct_threshold=args.ponderador_class4_safe_pct_threshold,
+		class4_unsafe_pct_keep_threshold=args.ponderador_class4_unsafe_pct_keep_threshold,
+		class4_entropy_pct_keep_threshold=args.ponderador_class4_entropy_pct_keep_threshold,
+		class4_entropy_max_for_downgrade=args.ponderador_class4_entropy_max_for_downgrade,
+		class4_entropy_threshold=args.ponderador_class4_entropy_threshold,
+		class4_entropy_min_cluster_cells=args.ponderador_class4_entropy_min_cluster_cells,
 	)
 	print(f"        ponderador_global: {ponderador_global_output.name}")
 	for basin_output in ponderador_basin_outputs:
