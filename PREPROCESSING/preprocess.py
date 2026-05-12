@@ -52,6 +52,86 @@ def _default_nodata_for_dtype(dtype_name: str):
 	return 0
 
 
+def _load_study_area_geometries(study_area_path: str | Path, target_crs=None):
+	"""Load study-area geometries from a vector file and reproject them if needed."""
+
+	import importlib.util
+
+	if importlib.util.find_spec("fiona") is None:
+		raise RuntimeError(
+			"Optional study-area clipping requires the 'fiona' package to read the shapefile. "
+			"Install it or disable --study-area."
+		)
+
+	import fiona
+	from fiona.transform import transform_geom
+
+	path = Path(study_area_path).expanduser().resolve()
+	if not path.exists():
+		raise FileNotFoundError(f"Study-area file not found: {path}")
+
+	with fiona.open(path) as src:
+		shapes = []
+		source_crs = src.crs_wkt or src.crs
+		for feature in src:
+			geometry = feature.get("geometry")
+			if not geometry:
+				continue
+			if target_crs is not None and source_crs not in (None, {}):
+				geometry = transform_geom(source_crs, target_crs, geometry)
+			elif target_crs is not None and source_crs in (None, {}):
+				raise ValueError(
+					"Study-area shapefile has no CRS metadata, so it cannot be reprojected to match the raster."
+				)
+			shapes.append(geometry)
+
+	if not shapes:
+		raise ValueError(f"No valid geometries found in study-area file: {path}")
+
+	return shapes
+
+
+def _clip_raster_to_study_area(in_path: str | Path, out_path: str | Path, study_area_path: str | Path) -> Path:
+	"""Clip a raster to a study-area polygon and crop the output extent."""
+
+	in_path = Path(in_path).expanduser().resolve()
+	out_path = Path(out_path).expanduser().resolve()
+	out_path.parent.mkdir(parents=True, exist_ok=True)
+
+	import numpy as np
+	import rasterio
+	from rasterio.mask import mask
+
+	with rasterio.open(in_path) as src:
+		profile = src.profile.copy()
+		nodata = src.nodata if src.nodata is not None else _default_nodata_for_dtype(src.dtypes[0])
+		shapes = _load_study_area_geometries(study_area_path, target_crs=src.crs)
+		masked, transform = mask(src, shapes, crop=True, filled=False)
+
+	data = np.asarray(masked.data)
+	mask_arr = np.asarray(masked.mask)
+	if mask_arr is not False:
+		if np.issubdtype(data.dtype, np.floating):
+			fill_value = np.nan if nodata is None else nodata
+		else:
+			fill_value = 0 if nodata is None else nodata
+		data = data.copy()
+		data[mask_arr] = fill_value
+
+	profile.update(
+		height=data.shape[-2],
+		width=data.shape[-1],
+		transform=transform,
+		nodata=nodata,
+		compress="deflate",
+	)
+
+	with rasterio.open(out_path, "w", **profile) as dst:
+		dst.write(data)
+
+	return out_path
+
+
 def align_forest_to_dem(
 	in_forest: str | Path,
 	ref_dem: str | Path,

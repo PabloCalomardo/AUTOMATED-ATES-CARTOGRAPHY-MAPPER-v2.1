@@ -38,6 +38,8 @@ from typing import List, Optional, Sequence, Tuple
 import numpy as np
 import rasterio
 
+from PostProcess_FlowPY.raster_alignment import read_single_band, read_single_band_on_ref_grid
+
 
 DEFAULT_OUTPUT_NODATA = 0.0
 
@@ -61,15 +63,6 @@ class BasinRunoutData:
 
 def _ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
-
-
-def _read_single_band(path: Path) -> Tuple[np.ndarray, np.ndarray, dict]:
-    with rasterio.open(path) as src:
-        band = src.read(1, masked=True)
-        data = np.asarray(band.data)
-        valid = ~np.asarray(band.mask)
-        profile = src.profile.copy()
-    return data, valid, profile
 
 
 def _check_alignment(profile_a: dict, profile_b: dict, label_a: str, label_b: str) -> None:
@@ -156,7 +149,7 @@ def _load_ending_zone_masks(definitive_layers_dir: Path, basin_id: int, ref_prof
         return union, overlap
 
     for ava_path in sorted(zones_dir.glob("Ava_*.tif")):
-        arr, valid, profile = _read_single_band(ava_path)
+        arr, valid, profile = read_single_band(ava_path)
         _check_alignment(ref_profile, profile, "reference", str(ava_path))
         ending = np.logical_and(valid, arr == 3)
         if np.any(ending):
@@ -190,13 +183,13 @@ def _load_basins(flowpy_root: Path) -> List[BasinRunoutData]:
         if not travel_path.exists():
             continue
 
-        bitmask_raw, bitmask_valid, profile = _read_single_band(bitmask_path)
+        bitmask_raw, bitmask_valid, profile = read_single_band(bitmask_path)
         bitmask = bitmask_raw.astype(np.uint64, copy=False)
 
-        flux, flux_valid, flux_profile = _read_single_band(flux_path)
-        z_delta, z_valid, z_profile = _read_single_band(z_delta_path)
-        cell_counts, cc_valid, cc_profile = _read_single_band(cell_counts_path)
-        angle, angle_valid, angle_profile = _read_single_band(travel_path)
+        flux, flux_valid, flux_profile = read_single_band(flux_path)
+        z_delta, z_valid, z_profile = read_single_band(z_delta_path)
+        cell_counts, cc_valid, cc_profile = read_single_band(cell_counts_path)
+        angle, angle_valid, angle_profile = read_single_band(travel_path)
 
         _check_alignment(profile, flux_profile, "bitmask", "flux")
         _check_alignment(profile, z_profile, "bitmask", "z_delta")
@@ -272,7 +265,7 @@ def run_runout_zone_characteristics(
     landforms = None
     landforms_valid = None
     if landform_path is not None and landform_path.exists():
-        lf, lf_valid, lf_profile = _read_single_band(landform_path)
+        lf, lf_valid, lf_profile = read_single_band_on_ref_grid(landform_path, ref_profile)
         _check_alignment(ref_profile, lf_profile, "reference", str(landform_path))
         landforms = lf.astype(np.uint8, copy=False)
         landforms_valid = lf_valid
@@ -280,7 +273,7 @@ def run_runout_zone_characteristics(
     burial = None
     burial_valid = None
     if burial_path.exists():
-        bt, bt_valid, bt_profile = _read_single_band(burial_path)
+        bt, bt_valid, bt_profile = read_single_band_on_ref_grid(burial_path, ref_profile)
         _check_alignment(ref_profile, bt_profile, "reference", str(burial_path))
         burial = bt.astype(np.uint8, copy=False)
         burial_valid = bt_valid

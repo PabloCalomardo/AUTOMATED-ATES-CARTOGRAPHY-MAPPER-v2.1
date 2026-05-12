@@ -11,6 +11,7 @@ El pipeline principal ([main.py](main.py)) executa 14 passos:
    - Escriu metadades a `outputs/Inputs/inputs.json`.
 
 2. Preprocessat DEM i forest
+   - Opcionalment, retalla DEM i forest amb un shapefile de delimitacio (`--study-area inputs/DELIMITACIO.shp`).
    - Omple nodata del DEM (`dem_filled_simple.tif`).
    - Alinea el forest al DEM (`forest_aligned.tif`).
    - Normalitza forest per Flow-Py (`FOREST_NORMALIZED.tif`, escala 0..1).
@@ -239,6 +240,7 @@ python main.py --until-n 14
 ```bash
 python main.py \
    --outputs-dir outputs/results_custom \
+   --study-area inputs/DELIMITACIO.shp \
   --watershed-threshold 15000 \
   --watershed-memory 2000 \
   --divisor-stream-threshold 300 \
@@ -246,6 +248,8 @@ python main.py \
    --flowpy-max-z 8000 \
    --overhead-cellcount-weight 0.5
 ```
+
+Si no passes `--study-area`, el pipeline manté el comportament actual i no retalla els rasters al polígon.
 
 Per controlar com es calcula l'overhead exposure (pas 8), usa:
 - `--overhead-cellcount-weight <0..1>` per mitjana ponderada.

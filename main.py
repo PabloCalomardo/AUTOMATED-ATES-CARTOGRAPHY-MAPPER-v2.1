@@ -3,7 +3,7 @@
 
 Execution order (current MVP):
 1) Read/validate inputs (DEM + forest density raster)
-2) Preprocess DEM (simple nodata filling)
+2) Preprocess DEM (simple nodata filling, optional study-area clipping)
 3) Compute PRA rasters (AutoATES PRA implementation)
 4) Subdivide PRA (PRA divisor)
 5) Watershed subdivision + PRA split (GRASS)
@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from PostProcess_FlowPY.overhead_exposure import compute_overhead_exposure_from_files
-from PREPROCESSING.preprocess import align_forest_to_dem, fill_dem_simple, normalize_forest_for_flowpy
+from PREPROCESSING.preprocess import _clip_raster_to_study_area, align_forest_to_dem, fill_dem_simple, normalize_forest_for_flowpy
 from PostProcess_FlowPY.SlopeandForest_Classification import run_slope_and_forest_classification, run_slope_only_classification
 from PostProcess_FlowPY.landforms_multiscale import run_landforms_multiscale
 from PostProcess_FlowPY.terrain_traps import detect_terrain_traps
@@ -80,12 +80,19 @@ def _raster_epsg(path: Path) -> Optional[str]:
 		return str(epsg)
 
 
-def step_01_inputs(dem_path: Path, forest_path: Optional[Path], out_dir: Path) -> Dict[str, Any]:
+def step_01_inputs(
+	dem_path: Path,
+	forest_path: Optional[Path],
+	out_dir: Path,
+	study_area_path: Optional[Path] = None,
+) -> Dict[str, Any]:
 	_ensure_dir(out_dir)
 	if not dem_path.exists():
 		raise FileNotFoundError(f"DEM not found: {dem_path}")
 	if forest_path is not None and not forest_path.exists():
 		raise FileNotFoundError(f"Forest raster not found: {forest_path}")
+	if study_area_path is not None and not study_area_path.exists():
+		raise FileNotFoundError(f"Study-area file not found: {study_area_path}")
 
 	try:
 		import rasterio
@@ -108,6 +115,7 @@ def step_01_inputs(dem_path: Path, forest_path: Optional[Path], out_dir: Path) -
 	manifest: Dict[str, Any] = {
 		"dem": _raster_meta(dem_path),
 		"forest": None if forest_path is None else _raster_meta(forest_path),
+		"study_area": None if study_area_path is None else str(study_area_path),
 	}
 
 	(out_dir / "inputs.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -118,20 +126,35 @@ def step_02_preprocess_dem(
 	dem_path: Path,
 	out_dir: Path,
 	forest_path: Optional[Path] = None,
+	study_area_path: Optional[Path] = None,
 	forest_crs: Optional[str] = None,
 	forest_type: Optional[str] = None,
 	flowpy_forest_divisor: Optional[float] = None,
 ) -> tuple[Path, Optional[Path], Optional[Path]]:
 	_ensure_dir(out_dir)
+	dem_source = dem_path
+	forest_source = forest_path
+	if study_area_path is not None:
+		dem_source = _clip_raster_to_study_area(
+			in_path=dem_path,
+			out_path=out_dir / "dem_clipped_study_area.tif",
+			study_area_path=study_area_path,
+		)
+		if forest_path is not None:
+			forest_source = _clip_raster_to_study_area(
+				in_path=forest_path,
+				out_path=out_dir / "forest_clipped_study_area.tif",
+				study_area_path=study_area_path,
+			)
 	out_dem = out_dir / "dem_filled_simple.tif"
-	fill_dem_simple(in_dem=dem_path, out_dem=out_dem)
+	fill_dem_simple(in_dem=dem_source, out_dem=out_dem)
 
 	out_forest: Optional[Path] = None
 	out_forest_normalized: Optional[Path] = None
-	if forest_path is not None:
+	if forest_source is not None:
 		out_forest = out_dir / "forest_aligned.tif"
 		align_forest_to_dem(
-			in_forest=forest_path,
+			in_forest=forest_source,
 			ref_dem=out_dem,
 			out_forest=out_forest,
 			forest_crs=forest_crs,
@@ -996,6 +1019,14 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--dem", default="inputs/DEM_BOW_SUMMIT.tif", help="Path to input DEM (GeoTIFF)") #DEM_ATES_CONNAUGHT DEM_BOW_SUMMIT
 	parser.add_argument("--forest", default="inputs/FOREST_BOW_SUMMIT.tif", help="Path to forest density raster (GeoTIFF)") # FOREST_BOW_SUMMIT FOREST_ATES_CONNAUGHT
 	parser.add_argument(
+		"--study-area",
+		default=None,
+		help=(
+			"Optional ESRI Shapefile used as study-area boundary. When provided, step 2 clips "
+			"both DEM and forest to this polygon before preprocessing (for example inputs/DELIMITACIO.shp)."
+		),
+	)
+	parser.add_argument(
 		"--forest-crs",
 		default=None,
 		help="Optional CRS for forest raster when missing in metadata (example: EPSG:25833)",
@@ -1450,6 +1481,7 @@ def main() -> None:
 	until_n = args.until_n
 	dem_path = _abs_path_from_app(args.dem)
 	forest_path = None if args.forest is None else _abs_path_from_app(args.forest)
+	study_area_path = None if args.study_area is None else _abs_path_from_app(args.study_area)
 	app_root = Path(__file__).resolve().parent
 	outputs_root = (app_root / "outputs").resolve()
 	if args.outputs_dir is None:
@@ -1532,7 +1564,7 @@ def main() -> None:
 		return
 
 	print("[1] Validating inputs...")
-	step_01_inputs(dem_path=dem_path, forest_path=forest_path, out_dir=out_01)
+	step_01_inputs(dem_path=dem_path, forest_path=forest_path, out_dir=out_01, study_area_path=study_area_path)
 	if until_n == 1:
 		print("Stopped at step 1 (--until-n).")
 		print(f"Outputs base dir: {outputs_dir}")
@@ -1543,6 +1575,7 @@ def main() -> None:
 		dem_path=dem_path,
 		out_dir=out_02,
 		forest_path=forest_path,
+		study_area_path=study_area_path,
 		forest_crs=args.forest_crs,
 		forest_type=args.forest_type,
 		flowpy_forest_divisor=args.flowpy_forest_divisor,

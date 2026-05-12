@@ -26,6 +26,8 @@ import numpy as np
 import rasterio
 from scipy.ndimage import maximum_filter, uniform_filter
 
+from PostProcess_FlowPY.raster_alignment import read_single_band, read_single_band_on_ref_grid
+
 
 TRAUMA_TREE = np.uint8(1)
 TRAUMA_CLIFF = np.uint8(2)
@@ -62,16 +64,6 @@ GULLY_PRESETS = {
 
 def _ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
-
-
-def _read_single_band(path: str | Path) -> Tuple[np.ndarray, np.ndarray, dict]:
-    raster_path = Path(path).expanduser().resolve()
-    with rasterio.open(raster_path) as src:
-        band = src.read(1, masked=True)
-        data = np.asarray(band.data)
-        valid = ~np.asarray(band.mask)
-        profile = src.profile.copy()
-    return data, valid, profile
 
 
 def _check_alignment(profile_a: dict, profile_b: dict, label_a: str, label_b: str) -> None:
@@ -140,7 +132,7 @@ def _collect_latest_zdelta_max(flowpy_root: Path, ref_profile: dict) -> tuple[Op
         if not z_delta_path.exists():
             continue
 
-        z_delta, valid, profile = _read_single_band(z_delta_path)
+        z_delta, valid, profile = read_single_band_on_ref_grid(z_delta_path, ref_profile)
         _check_alignment(ref_profile, profile, "dem", str(z_delta_path))
 
         z_delta = z_delta.astype(np.float32, copy=False)
@@ -186,7 +178,7 @@ def _load_landforms(path: Optional[Path], ref_profile: dict, shape: Tuple[int, i
     if path is None or not path.exists():
         return np.zeros(shape, dtype=np.uint8)
 
-    arr, valid, profile = _read_single_band(path)
+    arr, valid, profile = read_single_band(path)
     _check_alignment(ref_profile, profile, "dem", str(path))
     out = np.zeros(shape, dtype=np.uint8)
     out[valid] = arr[valid].astype(np.uint8, copy=False)
@@ -395,10 +387,10 @@ def detect_terrain_traps(
     lake_max_spi_threshold: Optional[float] = None,
     lake_max_spi_percentile: float = 35.0,
 ) -> List[Path]:
-    dem, dem_valid, dem_profile = _read_single_band(dem_path)
+    dem, dem_valid, dem_profile = read_single_band(dem_path)
     dem = dem.astype(np.float32, copy=False)
 
-    forest, forest_valid, forest_profile = _read_single_band(forest_path)
+    forest, forest_valid, forest_profile = read_single_band(forest_path)
     forest = forest.astype(np.float32, copy=False)
     _check_alignment(dem_profile, forest_profile, "dem", "forest")
 
