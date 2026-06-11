@@ -1,0 +1,9 @@
+GDAL
+PyQt5
+fiona
+numpy
+psutil
+rasterio
+scikit-image
+scipy
+whitebox
