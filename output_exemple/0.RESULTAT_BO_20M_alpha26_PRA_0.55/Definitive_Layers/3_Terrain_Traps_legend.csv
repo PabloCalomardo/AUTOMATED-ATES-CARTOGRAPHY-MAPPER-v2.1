@@ -1,0 +1,11 @@
+layer,value,label,notes
+Trees,1,Tree trap,Independent binary raster
+Cliffs,1,Cliff/rock trap,Independent binary raster
+Gullies,1,Gully trap,SPI-based with A^m*S^n
+RoadCuts,1,Road cut/bench trap,Independent binary raster
+Lakes,1,Lake trap,Creeks excluded via low-SPI criterion
+TraumaBitmask,1,Trees,Trees bit
+TraumaBitmask,2,Cliffs,Cliffs bit
+BurialBitmask,1,Gullies,Gullies bit
+BurialBitmask,2,RoadCuts,RoadCuts bit
+BurialBitmask,4,Lakes,Lakes bit

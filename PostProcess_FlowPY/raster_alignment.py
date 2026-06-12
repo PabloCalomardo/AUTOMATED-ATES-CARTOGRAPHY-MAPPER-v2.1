@@ -14,7 +14,13 @@ def read_single_band(path: str | Path) -> Tuple[np.ndarray, np.ndarray, dict]:
     with rasterio.open(raster_path) as src:
         band = src.read(1, masked=True)
         data = np.asarray(band.data)
-        valid = ~np.asarray(band.mask)
+        mask = np.asarray(band.mask)
+        # rasterio/numpy may represent a fully-valid mask as a scalar False.
+        # Ensure `valid` is always an array aligned to `data`.
+        if mask.ndim == 0:
+            valid = np.full(data.shape, ~bool(mask), dtype=bool)
+        else:
+            valid = ~mask
         profile = src.profile.copy()
     return data, valid, profile
 
@@ -24,7 +30,11 @@ def read_single_band_on_ref_grid(path: str | Path, ref_profile: dict, resampling
     with rasterio.open(raster_path) as src:
         band = src.read(1, masked=True)
         data = np.asarray(band.data)
-        valid = ~np.asarray(band.mask)
+        mask = np.asarray(band.mask)
+        if mask.ndim == 0:
+            valid = np.full(data.shape, ~bool(mask), dtype=bool)
+        else:
+            valid = ~mask
         profile = src.profile.copy()
 
         same_grid = (

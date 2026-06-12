@@ -1,0 +1,6 @@
+range,characteristic_axis
+0.00,No known runout zones
+"(0.00, 0.25]","Clear boundaries, gentle transitions, smooth runouts"
+"(0.25, 0.50]","Abrupt transitions, confined runouts, longer connection"
+"(0.50, 0.75]",Multiple converging/confined runouts connected to starts
+"(0.75, 1.00]","Steep fans/gullies/cliffs, severe overhead runout"

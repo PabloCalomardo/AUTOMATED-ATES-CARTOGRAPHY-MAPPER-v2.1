@@ -1,0 +1,75 @@
+2026-05-17 16:45:09 INFO     Start Calculation
+2026-05-17 16:45:09 INFO     Alpha Angle: 26
+2026-05-17 16:45:09 INFO     Exponent: 8
+2026-05-17 16:45:09 INFO     Flux Threshold: 0.003
+2026-05-17 16:45:09 INFO     Max Z_delta: 270
+2026-05-17 16:45:09 INFO     DEM File: C:\Users\pablo\Desktop\TFG\APP_ATES_PABLO\outputs\results_171644\Preprocess\dem_filled_simple.tif
+2026-05-17 16:45:09 INFO     Release File: C:\Users\pablo\Desktop\TFG\APP_ATES_PABLO\outputs\results_171644\Flow-Py\pra_basin_0\release_for_flowpy.tif
+2026-05-17 16:45:09 INFO     PRA IDs detected: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
+2026-05-17 16:45:09 INFO     Forest File: C:\Users\pablo\Desktop\TFG\APP_ATES_PABLO\outputs\results_171644\Preprocess\FOREST_NORMALIZED.tif
+2026-05-17 16:45:09 INFO     Files read in
+2026-05-17 16:45:09 INFO     Multiprocessing starts, used cores: 6
+2026-05-17 16:45:20 INFO     Calculation finished, getting results.
+2026-05-17 16:45:20 INFO     Writing Output Files
+2026-05-17 16:45:20 INFO     Calculation needed: 0:00:11 seconds
+2026-05-17 16:45:20 WARNING  CPLE_IllegalArg in exposure.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:20 WARNING  CPLE_IllegalArg in Exposure_zdelta_cellcount.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:21 WARNING  CPLE_IllegalArg in 1_Slope_Classification_NoForest.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:21 WARNING  CPLE_IllegalArg in 1_SlopeandForest_Classification.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:21 WARNING  CPLE_IllegalArg in 2_Landforms_curvature_5x5.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:21 WARNING  CPLE_IllegalArg in 2_Landforms_curvature_10x10.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:21 WARNING  CPLE_IllegalArg in 2_Landforms_curvature_15x15.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:21 WARNING  CPLE_IllegalArg in 2_Landforms_curvature_20x20.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:22 WARNING  CPLE_IllegalArg in 2_Landforms_curvature_25x25.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in 2_Landforms_curvature_30x30.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in 2_Landforms_entropy_5to30.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in 3_Terrain_Traps_Trees.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in 3_Terrain_Traps_Cliffs.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in 3_Terrain_Traps_Gullies.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in 3_Terrain_Traps_Gullies_conservative.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in 3_Terrain_Traps_Gullies_balanced.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in 3_Terrain_Traps_Gullies_aggressive.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in 3_Terrain_Traps_RoadCuts.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in 3_Terrain_Traps_Lakes.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in 3_Terrain_Traps_trauma_bitmask.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in 3_Terrain_Traps_burial_bitmask.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in 3_Terrain_Traps_energy_proxy.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in 3_Terrain_Traps_SPI_gullies.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in Ava_1.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in Ava_2.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in Ava_3.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in Ava_4.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in Ava_5.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in Ava_6.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in Ava_7.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in Ava_8.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in Ava_9.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in Ava_10.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in Ava_11.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in Ava_12.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in Ava_13.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in Ava_14.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in Ava_15.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in Ava_16.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in Ava_17.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in Ava_18.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in Ava_19.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in Ava_20.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in Ava_21.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:23 WARNING  CPLE_IllegalArg in Ava_22.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:24 WARNING  CPLE_IllegalArg in 6_Runout_Zone_Characteristics.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:24 WARNING  CPLE_IllegalArg in sz_binary_for_ponderador.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:24 WARNING  CPLE_IllegalArg in slope.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:24 WARNING  CPLE_IllegalArg in slope_smooth.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:24 WARNING  CPLE_IllegalArg in flowpy.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:24 WARNING  CPLE_IllegalArg in cellcount_reclass.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:24 WARNING  CPLE_IllegalArg in merge_new.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:24 WARNING  CPLE_IllegalArg in forest_reclass.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:24 WARNING  CPLE_IllegalArg in SZ_reclass.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:24 WARNING  CPLE_IllegalArg in merge_all.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:24 WARNING  CPLE_IllegalArg in ates_gen.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:24 WARNING  CPLE_IllegalArg in Ponderador_ATES.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:24 WARNING  CPLE_IllegalArg in Ponderador_ATES.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:24 WARNING  CPLE_IllegalArg in Ponderador_ATES_islands.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:25 WARNING  CPLE_IllegalArg in Ponderador_ATES_islands_smoothed.tif: BLOCKXSIZE can only be used with TILED=YES
+2026-05-17 16:45:25 WARNING  CPLE_IllegalArg in Ponderador_ATES_islands_smoothed_islands.tif: BLOCKXSIZE can only be used with TILED=YES

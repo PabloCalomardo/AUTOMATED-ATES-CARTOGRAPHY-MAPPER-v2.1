@@ -13,6 +13,7 @@ __pycache__/
 *.pyd
 
 # Project data folders (requested)
+inputs/EL_PONTET/*
 outputs/
 grassdata/
 Verificador/

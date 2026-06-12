@@ -1,0 +1,37 @@
+{
+  "dem": {
+    "path": "C:\\Users\\pablo\\Desktop\\TFG\\APP_ATES_PABLO\\inputs\\EL_PONTET\\DEM_EL_PONTET_20M_INPUT.tif",
+    "crs": "EPSG:25831",
+    "transform": [
+      20.01984126984127,
+      0.0,
+      315070.0,
+      0.0,
+      -19.98175182481752,
+      4727825.0
+    ],
+    "width": 252,
+    "height": 274,
+    "count": 1,
+    "dtype": "float32",
+    "nodata": -9999.0
+  },
+  "forest": {
+    "path": "C:\\Users\\pablo\\Desktop\\TFG\\APP_ATES_PABLO\\inputs\\INPUTS_EXPERIMENTS\\AREA_BASSAL.tif",
+    "crs": "EPSG:25831",
+    "transform": [
+      20.0,
+      0.0,
+      260000.0,
+      0.0,
+      -20.0,
+      4750000.0
+    ],
+    "width": 13400,
+    "height": 13100,
+    "count": 1,
+    "dtype": "float32",
+    "nodata": 0.0
+  },
+  "study_area": "C:\\Users\\pablo\\Desktop\\TFG\\APP_ATES_PABLO\\inputs\\DELIMITACIONS\\DELIMITACIO_PONTET.shp"
+}

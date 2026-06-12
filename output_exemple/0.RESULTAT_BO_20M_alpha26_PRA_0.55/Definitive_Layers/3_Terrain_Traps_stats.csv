@@ -1,0 +1,14 @@
+metric,value
+Trees_pixels,62
+Cliffs_pixels,769
+Gullies_pixels,19
+Gullies_conservative_pixels,5
+Gullies_balanced_pixels,19
+Gullies_aggressive_pixels,119
+RoadCuts_pixels,167
+Lakes_pixels,11
+Gully_SPI_threshold_used,38540.6875
+Gully_SPI_threshold_conservative,116445.0390625
+Gully_SPI_threshold_balanced,38540.6875
+Gully_SPI_threshold_aggressive,10118.1904296875
+Lake_SPI_max_threshold_used,917.51513671875

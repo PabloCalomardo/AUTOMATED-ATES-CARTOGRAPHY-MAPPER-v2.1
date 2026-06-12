@@ -25,6 +25,8 @@ from typing import Iterable
 # 	("bow_no_limit_oh_025", "python main.py --dem inputs/DEM_BOW_SUMMIT.tif --forest inputs/FOREST_BOW_SUMMIT.tif --overhead-cellcount-weight 0.25"),
 # 	("connaught_with_limit_oh_max", "python main.py --dem inputs/DEM_ATES_CONNAUGHT.tif --forest inputs/FOREST_ATES_CONNAUGHT.tif --study-area inputs/DELIMITACIO_CONNAUGHT.shp --overhead-cellcount-weight 2"),
 # ]
+
+"""
 COMMANDS: list[tuple[str, str]] = [
 	# BOW SUMMIT
 	("bow_no_limit_oh_0", "python main.py --dem inputs/DEM_BOW_SUMMIT.tif --forest inputs/FOREST_BOW_SUMMIT.tif --overhead-cellcount-weight 0"),
@@ -44,7 +46,13 @@ COMMANDS: list[tuple[str, str]] = [
 	("connaught_limit_oh_0p5", "python main.py --dem inputs/DEM_ATES_CONNAUGHT.tif --forest inputs/FOREST_ATES_CONNAUGHT.tif --study-area inputs/DELIMITACIONS/DELIMITACIO_CONNAUGHT.shp --overhead-cellcount-weight 0.5"),
 	("connaught_limit_oh_1", "python main.py --dem inputs/DEM_ATES_CONNAUGHT.tif --forest inputs/FOREST_ATES_CONNAUGHT.tif --study-area inputs/DELIMITACIONS/DELIMITACIO_CONNAUGHT.shp --overhead-cellcount-weight 1"),
 	("connaught_limit_oh_max", "python main.py --dem inputs/DEM_ATES_CONNAUGHT.tif --forest inputs/FOREST_ATES_CONNAUGHT.tif --study-area inputs/DELIMITACIONS/DELIMITACIO_CONNAUGHT.shp --overhead-cellcount-weight 2"),
-]
+]"""
+
+
+COMMANDS: list[tuple[str, str]] = [
+	# BOW SUMMIT
+	("definitiu", "python main.py --dem inputs/EL_PONTET/DEM_EL_PONTET_20M_INPUT.tif --forest inputs/INPUTS_EXPERIMENTS/AREA_BASSAL.tif --overhead-cellcount-weight 2 --radius 4 --study-area inputs/DELIMITACIONS/DELIMITACIO_PONTET.shp --flowpy-exponent 4 --pra-thd 0.55"),
+]	
 
 
 def _repo_root() -> Path:
